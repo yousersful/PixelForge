@@ -40,6 +40,18 @@ from pixelforge.models.providers import (
     QIANWEN_IMAGE_EDIT_SIZES,
     QIANWEN_IMAGE_MODEL_CANDIDATES,
     QIANWEN_IMAGE_SIZES,
+    ZHIPU_IMAGE_DISPLAY_NAMES,
+    ZHIPU_IMAGE_MODEL_CANDIDATES,
+    ZHIPU_IMAGE_SIZES,
+    ARK_IMAGE_DISPLAY_NAMES,
+    ARK_IMAGE_MODEL_CANDIDATES,
+    ARK_IMAGE_SIZES,
+    MINIMAX_IMAGE_DISPLAY_NAMES,
+    MINIMAX_IMAGE_MODEL_CANDIDATES,
+    MINIMAX_IMAGE_SIZES,
+    HUNYUAN_IMAGE_DISPLAY_NAMES,
+    HUNYUAN_IMAGE_MODEL_CANDIDATES,
+    HUNYUAN_IMAGE_SIZES,
     ModelInfo,
     Provider,
 )
@@ -299,6 +311,330 @@ class SiliconFlowClient:
             return f"HTTP {resp.status_code}: {resp.text[:200]}"
 
 
+class ZhipuClient(SiliconFlowClient):
+    """智谱 BigModel（CogView 系列）图像生成客户端。
+
+    与硅基流动同为 OpenAI 风格同步接口，差异点（据官方文档）：
+      - 尺寸参数名为 size（非 image_size），且不支持 batch_size
+        （每次固定返回一张，data[].url）
+      - 无 /models 查询接口，模型为固定枚举，直接返回静态候选表
+      - 不支持 negative_prompt / 参考图 / seed，传入时忽略
+    """
+
+    def __init__(self, provider: Provider, api_key: str, base_url: str = "") -> None:
+        super().__init__(provider, api_key)
+        # 允许用户在设置中覆盖 base（默认 https://open.bigmodel.cn/api/paas/v4）
+        self.base = (base_url or provider.api_base).rstrip("/")
+
+    def list_image_models(self) -> List[ModelInfo]:
+        return [
+            ModelInfo(
+                id=mid,
+                name=ZHIPU_IMAGE_DISPLAY_NAMES.get(mid, mid),
+                sizes=ZHIPU_IMAGE_SIZES.get(mid, ["1024x1024"]),
+            )
+            for mid in ZHIPU_IMAGE_MODEL_CANDIDATES
+        ]
+
+    def list_edit_models(self) -> List[ModelInfo]:
+        return []  # 智谱暂无图生图（编辑）模型
+
+    def generate(
+        self,
+        prompt: str,
+        model: str,
+        size: str = "1024x1024",
+        num_images: int = 1,
+        image: Optional[str] = None,
+        negative_prompt: str = "",
+        **extra,
+    ) -> GenerationResult:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "size": size,
+        }
+        try:
+            resp = requests.post(
+                f"{self.base}/images/generations",
+                headers=headers,
+                json=payload,
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise ApiError(f"请求失败：{exc}") from exc
+
+        if resp.status_code != 200:
+            raise ApiError(self._error_text(resp))
+
+        data = resp.json()
+        result = self._parse_images(data, prompt)
+        if result.images:
+            return result
+        raise ApiError("未在响应中找到图片数据")
+
+
+class ArkClient(SiliconFlowClient):
+    """火山方舟（Doubao Seedream 系列）图像生成客户端。
+
+    OpenAI 风格同步接口，与官方文档差异点：
+      - size 支持 1K/2K/4K 档位或精确 WxH
+      - Seedream 4.x 同一模型即可文生图，也可传 image 做参考图（图生图）
+      - 响应 data[].url；模型需在方舟控制台开通，否则报 ModelNotOpen
+    """
+
+    def __init__(self, provider: Provider, api_key: str, base_url: str = "") -> None:
+        super().__init__(provider, api_key)
+        self.base = (base_url or provider.api_base).rstrip("/")
+
+    def list_image_models(self) -> List[ModelInfo]:
+        return [
+            ModelInfo(
+                id=mid,
+                name=ARK_IMAGE_DISPLAY_NAMES.get(mid, mid),
+                sizes=ARK_IMAGE_SIZES.get(mid, ["2048x2048"]),
+            )
+            for mid in ARK_IMAGE_MODEL_CANDIDATES
+        ]
+
+    def list_edit_models(self) -> List[ModelInfo]:
+        # Seedream 4.x 支持参考图输入，文生图模型同时可作图生图模型
+        return self.list_image_models()
+
+    def generate(
+        self,
+        prompt: str,
+        model: str,
+        size: str = "2048x2048",
+        num_images: int = 1,
+        image: Optional[str] = None,
+        negative_prompt: str = "",
+        **extra,
+    ) -> GenerationResult:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "size": size,
+            "response_format": "url",
+        }
+        if image:
+            # Seedream 4.x 接受 data URL 或 URL 列表
+            payload["image"] = image
+        try:
+            resp = requests.post(
+                f"{self.base}/images/generations",
+                headers=headers,
+                json=payload,
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise ApiError(f"请求失败：{exc}") from exc
+
+        if resp.status_code != 200:
+            raise ApiError(self._error_text(resp))
+
+        data = resp.json()
+        result = self._parse_images(data, prompt)
+        if result.images:
+            return result
+        raise ApiError("未在响应中找到图片数据")
+
+
+class MiniMaxClient:
+    """MiniMax（image-01 系列）图像生成客户端。
+
+    自有接口（非 OpenAI 兼容），已实测确认：
+      POST {base}/image_generation
+      请求：model / prompt / width+height（8 的倍数，512–2048）/
+            subject_reference（图生图，对象数组，字段 image_file）/ n
+      响应：{"data": {"image_urls": [...]}, "base_resp": {"status_code": 0}}
+      base_resp.status_code == 0 才是成功，图片 URL 24 小时有效。
+    """
+
+    def __init__(self, provider: Provider, api_key: str, base_url: str = "") -> None:
+        if not api_key:
+            raise ApiError("缺少 API Key，请在设置中填写")
+        self.provider = provider
+        self.api_key = api_key
+        self.base = (base_url or provider.api_base).rstrip("/")
+        self.timeout = 90
+
+    def list_image_models(self) -> List[ModelInfo]:
+        return [
+            ModelInfo(
+                id=mid,
+                name=MINIMAX_IMAGE_DISPLAY_NAMES.get(mid, mid),
+                sizes=MINIMAX_IMAGE_SIZES.get(mid, ["1024x1024"]),
+            )
+            for mid in MINIMAX_IMAGE_MODEL_CANDIDATES
+        ]
+
+    def list_edit_models(self) -> List[ModelInfo]:
+        # image-01 支持人物主体参考（subject_reference）形式的图生图
+        return [
+            ModelInfo(
+                id="image-01",
+                name=MINIMAX_IMAGE_DISPLAY_NAMES["image-01"],
+                sizes=MINIMAX_IMAGE_SIZES["image-01"],
+            )
+        ]
+
+    def generate(
+        self,
+        prompt: str,
+        model: str,
+        size: str = "1024x1024",
+        num_images: int = 1,
+        image: Optional[str] = None,
+        negative_prompt: str = "",
+        **extra,
+    ) -> GenerationResult:
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "response_format": "url",
+            "n": max(1, min(num_images, 9)),
+        }
+        # size 传 WxH 时拆成 width/height；非 WxH（如档位名）则省略用默认 1:1
+        w, h = _parse_wxh(size)
+        if w and h:
+            payload["width"], payload["height"] = w, h
+        if image:
+            payload["subject_reference"] = [
+                {"type": "character", "image_file": image}
+            ]
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            resp = requests.post(
+                f"{self.base}/image_generation",
+                headers=headers,
+                json=payload,
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise ApiError(f"请求失败：{exc}") from exc
+
+        data = resp.json()
+        # MiniMax 即便业务失败也可能返回 HTTP 200，以 base_resp.status_code 为准
+        base = data.get("base_resp") or {}
+        if base.get("status_code") not in (0, None):
+            raise ApiError(f"MiniMax 错误 {base.get('status_code')}: {base.get('status_msg', '')}")
+        if resp.status_code != 200:
+            raise ApiError(self._error_text(resp))
+
+        result = GenerationResult(prompt=prompt)
+        for url in (data.get("data") or {}).get("image_urls") or []:
+            result.images.append(_download(url))
+        if not result.images:
+            raise ApiError("未在响应中找到图片数据")
+        return result
+
+    @staticmethod
+    def _error_text(resp) -> str:
+        try:
+            body = resp.json()
+            base = body.get("base_resp") or {}
+            return (
+                f"HTTP {resp.status_code}: "
+                f"{base.get('status_msg') or body.get('message') or resp.text[:200]}"
+            )
+        except Exception:
+            return f"HTTP {resp.status_code}: {resp.text[:200]}"
+
+
+def _parse_wxh(size: str) -> tuple:
+    """把 "1024x1024" 解析成 (1024, 1024)，解析失败返回 (None, None)。"""
+    s = (size or "").strip().lower()
+    if "x" in s:
+        try:
+            w, h = (int(p) for p in s.split("x", 1))
+            return w, h
+        except ValueError:
+            pass
+    return None, None
+
+
+class HunyuanClient(SiliconFlowClient):
+    """腾讯混元 Hy-Image（TokenHub / tencentmaas）客户端。
+
+    已实测确认的接口行为：
+      POST {base}/wand/hunyuan-image/v3-generation（Bearer sk- Key）
+      请求：model=hy-image-v3 / prompt / size / image（data URL 即图生图）
+      响应：OpenAI 风格 {"data": [{"url": ...}], "created", "revised_prompt"}
+      同步返回；size 面积上限 1024x1024。
+    """
+
+    def __init__(self, provider: Provider, api_key: str, base_url: str = "") -> None:
+        super().__init__(provider, api_key)
+        self.base = (base_url or provider.api_base).rstrip("/")
+
+    def list_image_models(self) -> List[ModelInfo]:
+        return [
+            ModelInfo(
+                id=mid,
+                name=HUNYUAN_IMAGE_DISPLAY_NAMES.get(mid, mid),
+                sizes=HUNYUAN_IMAGE_SIZES.get(mid, ["1024x1024"]),
+            )
+            for mid in HUNYUAN_IMAGE_MODEL_CANDIDATES
+        ]
+
+    def list_edit_models(self) -> List[ModelInfo]:
+        # hy-image-v3 的 image 字段支持参考图输入，文生图/图生图同一模型
+        return self.list_image_models()
+
+    def generate(
+        self,
+        prompt: str,
+        model: str,
+        size: str = "1024x1024",
+        num_images: int = 1,
+        image: Optional[str] = None,
+        negative_prompt: str = "",
+        **extra,
+    ) -> GenerationResult:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "size": size,
+        }
+        if image:
+            payload["image"] = image
+        try:
+            resp = requests.post(
+                f"{self.base}/wand/hunyuan-image/v3-generation",
+                headers=headers,
+                json=payload,
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise ApiError(f"请求失败：{exc}") from exc
+
+        if resp.status_code != 200:
+            raise ApiError(self._error_text(resp))
+
+        data = resp.json()
+        result = self._parse_images(data, prompt)
+        if result.images:
+            return result
+        raise ApiError("未在响应中找到图片数据")
+
+
 class QianwenClient:
     """千问/百炼（DashScope 工作区）图像生成客户端。
 
@@ -482,6 +818,14 @@ def get_client(
     """按 Provider 类型返回对应的图像生成客户端。"""
     if provider.id == "qianwen":
         return QianwenClient(provider, api_key, base_url)
+    if provider.id == "zhipu":
+        return ZhipuClient(provider, api_key, base_url)
+    if provider.id == "ark":
+        return ArkClient(provider, api_key, base_url)
+    if provider.id == "minimax":
+        return MiniMaxClient(provider, api_key, base_url)
+    if provider.id == "hunyuan":
+        return HunyuanClient(provider, api_key, base_url)
     return SiliconFlowClient(provider, api_key)
 
 

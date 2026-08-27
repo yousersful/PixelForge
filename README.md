@@ -4,11 +4,20 @@
 
 ## 功能
 
-- **API Key 管理**：设置页填入 Key，本地 AES 加密存储，不明文显示
-- **文本生图**：输入描述，调用硅基流动（SiliconFlow）生成图片
+- **多厂商接入**：内置六家图像生成服务，切换厂商只需在设置里填对应 Key
+  - 硅基流动（SiliconFlow）：Kolors / Qwen-Image / FLUX 等开源模型聚合
+  - 千问 / 百炼（DashScope 工作区）：wan2.7 系列等
+  - 智谱 BigModel：CogView-4 / CogView-3-Flash（免费）/ GLM-Image
+  - 火山方舟（Volcano Ark）：Doubao Seedream 4.0 / 4.5
+  - MiniMax：image-01 系列
+  - 腾讯混元：Hy-Image 3.0（TokenHub）
+- **文本生图**：输入描述即可生成，支持批量生成与并排对比
+- **图生图**：上传参考图 + 文本指令，支持千问编辑模型、Seedream、MiniMax、混元 Hy-Image
+- **提示词优化**：一键调用轻量 LLM 把简单描述扩写成高质量英文提示词（硅基流动）
 - **图片预览 / 保存**：应用内预览，可右键或按钮保存
-- **生成历史**：SQLite 记录每次生成，可回溯
-- **多模型**：Kolors / FLUX.1-schnell / FLUX.1-dev 等
+- **收藏夹**：一键收藏到 `Like/` 目录，与历史独立管理
+- **生成历史**：SQLite 记录每次生成，可回溯；支持导出 JSON / CSV（含图片）
+- **API Key 管理**：按厂商独立存储，Fernet 加密，不明文显示
 
 ## 项目结构
 
@@ -19,17 +28,25 @@ PixelForge/
 ├── pixelforge/
 │   ├── main.py               # 应用入口
 │   ├── config.py             # 配置管理（JSON）
-│   ├── models/providers.py   # 厂商/模型定义
-│   ├── security/key_manager.py  # API Key 加密
+│   ├── models/
+│   │   ├── providers.py      # 厂商/模型/尺寸表定义
+│   │   └── prompts.py        # 提示词模板
+│   ├── security/key_manager.py  # API Key 加密（Fernet）
 │   ├── core/
-│   │   ├── api_client.py     # SiliconFlow API 客户端
+│   │   ├── api_client.py     # 各厂商 API 客户端与工厂
 │   │   ├── image_service.py  # 图片生成服务（门面）
-│   │   └── storage.py        # SQLite 历史记录
-│   └── ui/
-│       ├── main_window.py    # 主窗口
-│       ├── generate_tab.py   # 生成页签
-│       ├── history_panel.py  # 历史页签
-│       └── settings_dialog.py# 设置对话框
+│   │   ├── storage.py        # SQLite 历史记录
+│   │   └── exporter.py       # 历史导出（JSON/CSV）
+│   ├── ui/
+│   │   ├── main_window.py         # 主窗口
+│   │   ├── generate_tab.py        # 文生图页签
+│   │   ├── image_to_image_tab.py  # 图生图页签
+│   │   ├── history_panel.py       # 历史面板
+│   │   ├── favorites_panel.py     # 收藏夹面板
+│   │   ├── settings_dialog.py     # 设置对话框
+│   │   ├── compare_dialog.py      # 多图对比
+│   │   └── export_dialog.py       # 导出对话框
+│   └── utils/helpers.py      # QThread worker、图片工具
 └── data/                     # 本地数据（运行时生成）
 ```
 
@@ -52,10 +69,18 @@ python3 -m venv .venv
 
 ## 使用流程
 
-1. 打开应用，点击工具栏 [设置]，填入 **硅基流动** 的 API Key（https://siliconflow.cn 注册获取）
+1. 打开应用，点击工具栏 [设置]，选择厂商并填入对应 API Key：
+   - 硅基流动：https://siliconflow.cn
+   - 智谱：https://bigmodel.cn （CogView-3-Flash 免费，适合先体验）
+   - 火山方舟：https://console.volcengine.com/ark （需开通 Seedream 模型服务）
+   - MiniMax：https://platform.minimaxi.com
+   - 腾讯混元：https://console.cloud.tencent.com/hunyuan （TokenHub 平台，sk- 开头的 API Key）
+   - 千问/百炼：DashScope 工作区专属 URL + Key
 2. 选择模型与尺寸，输入图片描述
 3. 点击 **生成**（或 `Ctrl+Enter`）
-4. 预览结果，可保存图片或查看历史
+4. 预览结果，可保存、收藏、对比或查看历史
+
+> 各厂商对尺寸的限制差异较大（如 Seedream 4.5 要求总像素 ≥ 368 万，混元 Hy-Image 面积 ≤ 1024×1024），模型切换后尺寸下拉框会自动适配。
 
 ## 数据安全
 
@@ -66,8 +91,13 @@ python3 -m venv .venv
 ## 路线图
 
 - [x] 项目骨架
-- [ ] 硅基流动 API 对接验证
-- [ ] 生成历史记录
-- [ ] 提示词模板
-- [ ] 更多厂商适配器
-- [ ] 图生图 / 视频生成
+- [x] 硅基流动 API 对接验证
+- [x] 生成历史记录
+- [x] 提示词模板与 LLM 优化
+- [x] 图生图
+- [x] 收藏夹
+- [x] 历史导出（JSON/CSV）
+- [x] 多厂商适配器（硅基流动 / 千问 / 智谱 / 火山方舟 / MiniMax / 腾讯混元）
+- [ ] 打包分发（pyinstaller / 安装包）
+- [ ] 单元测试
+- [ ] 视频生成

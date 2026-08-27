@@ -131,6 +131,98 @@ QIANWEN_IMAGE_EDIT_SIZES: Dict[str, List[str]] = {
 }
 
 
+# ----------------------------------------------------------------------
+# 智谱 BigModel（CogView 系列）
+# 同步 OpenAI 风格 /images/generations，响应 data[].url。
+# 无 /models 查询接口，模型为固定枚举，直接用静态表。
+# ----------------------------------------------------------------------
+ZHIPU_IMAGE_MODEL_CANDIDATES: List[str] = [
+    "cogview-4",
+    "cogview-3-flash",
+    "glm-image",
+]
+
+ZHIPU_IMAGE_DISPLAY_NAMES: Dict[str, str] = {
+    "cogview-4": "CogView-4",
+    "cogview-3-flash": "CogView-3-Flash (免费)",
+    "glm-image": "GLM-Image",
+}
+
+ZHIPU_IMAGE_SIZES: Dict[str, List[str]] = {
+    # cogview 系列：512–2048px，16 的倍数
+    "cogview-4": ["1024x1024", "768x1344", "864x1152", "1344x768", "1152x864", "1440x720", "720x1440"],
+    "cogview-3-flash": ["1024x1024", "768x1344", "864x1152", "1344x768", "1152x864", "1440x720", "720x1440"],
+    # glm-image：推荐尺寸，32 的倍数，仅 hd
+    "glm-image": ["1280x1280", "1568x1056", "1056x1568", "1472x1088", "1088x1472", "1728x960", "960x1728"],
+}
+
+
+# ----------------------------------------------------------------------
+# 火山方舟 Volcano Ark（Doubao Seedream 系列）
+# OpenAI 风格同步 /images/generations，响应 data[].url。
+# Seedream 4.x 同一模型支持文生图与参考图输入（图生图）。
+# 注意：调用前需在方舟控制台开通对应模型服务。
+# ----------------------------------------------------------------------
+ARK_IMAGE_MODEL_CANDIDATES: List[str] = [
+    "doubao-seedream-4-0-250828",
+    "doubao-seedream-4-5-251128",
+]
+
+ARK_IMAGE_DISPLAY_NAMES: Dict[str, str] = {
+    "doubao-seedream-4-0-250828": "Seedream 4.0",
+    "doubao-seedream-4-5-251128": "Seedream 4.5",
+}
+
+ARK_IMAGE_SIZES: Dict[str, List[str]] = {
+    # Seedream 4.0：1K~4K 均可，实测最低支持 1024x1024
+    "doubao-seedream-4-0-250828": ["2048x2048", "1024x1024", "2304x1728", "1728x2304", "2K", "4K"],
+    # Seedream 4.5：实测要求总像素 >= 3686400，1024x1024 会被拒绝
+    "doubao-seedream-4-5-251128": ["2048x2048", "2304x1728", "1728x2304", "2K", "4K"],
+}
+
+# ----------------------------------------------------------------------
+# MiniMax（image-01 系列）
+# 自有接口 POST /v1/image_generation，响应 data.image_urls[]。
+# 同一端点支持文生图；图生图走 subject_reference（人物主体参考）。
+# ----------------------------------------------------------------------
+MINIMAX_IMAGE_MODEL_CANDIDATES: List[str] = [
+    "image-01",
+    "image-01-live",
+]
+
+MINIMAX_IMAGE_DISPLAY_NAMES: Dict[str, str] = {
+    "image-01": "MiniMax image-01",
+    "image-01-live": "MiniMax image-01-live",
+}
+
+MINIMAX_IMAGE_SIZES: Dict[str, List[str]] = {
+    # width/height：512–2048px，8 的倍数
+    "image-01": ["1024x1024", "1024x576", "1360x768", "768x1360", "576x1024", "2048x2048"],
+    "image-01-live": ["1024x1024", "1024x576", "1360x768", "768x1360", "576x1024"],
+}
+
+
+# ----------------------------------------------------------------------
+# 腾讯混元 Hy-Image（TokenHub / tencentmaas 新平台）
+# 同步 OpenAI 风格接口（官方示例端点，响应 data[].url）。
+# 已实测：size 限制为面积 <= 1024x1024（1280x720 等非方形可用，
+# 2048x2048 报"图片面积不能超过1024x1024"）；image 字段传 data URL
+# 即为图生图。Bearer 鉴权用控制台的 sk- API Key（非 SecretId/Key）。
+# ----------------------------------------------------------------------
+HUNYUAN_IMAGE_MODEL_CANDIDATES: List[str] = [
+    "hy-image-v3",
+]
+
+HUNYUAN_IMAGE_DISPLAY_NAMES: Dict[str, str] = {
+    "hy-image-v3": "混元 Hy-Image 3.0",
+}
+
+HUNYUAN_IMAGE_SIZES: Dict[str, List[str]] = {
+    # 面积上限 1024x1024，均为已验证或同面积档位
+    "hy-image-v3": ["1024x1024", "1280x720", "720x1280", "1024x576", "576x1024", "960x960"],
+}
+
+
 def make_model(model_id: str) -> ModelInfo:
     """根据候选表创建一个 ModelInfo。"""
     return ModelInfo(
@@ -173,8 +265,46 @@ QIANWEN = Provider(
 )
 
 
+# 智谱 BigModel：api_base 不含尾部的 /images/generations
+ZHIPU = Provider(
+    id="zhipu",
+    name="智谱 (BigModel)",
+    api_base="https://open.bigmodel.cn/api/paas/v4",
+    api_key_env="ZHIPU_API_KEY",
+    models=make_models(ZHIPU_IMAGE_MODEL_CANDIDATES),
+)
+
+
+# 火山方舟：需在方舟控制台开通模型服务后才可调用
+ARK = Provider(
+    id="ark",
+    name="火山方舟 (Volcano Ark)",
+    api_base="https://ark.cn-beijing.volces.com/api/v3",
+    api_key_env="ARK_API_KEY",
+    models=make_models(ARK_IMAGE_MODEL_CANDIDATES),
+)
+
+MINIMAX = Provider(
+    id="minimax",
+    name="MiniMax",
+    api_base="https://api.minimaxi.com/v1",
+    api_key_env="MINIMAX_API_KEY",
+    models=make_models(MINIMAX_IMAGE_MODEL_CANDIDATES),
+)
+
+
+# 腾讯混元：TokenHub 新平台，Bearer 用 sk- API Key
+HUNYUAN = Provider(
+    id="hunyuan",
+    name="腾讯混元 (Hy-Image)",
+    api_base="https://tokenhub.tencentmaas.com/v1",
+    api_key_env="HUNYUAN_API_KEY",
+    models=make_models(HUNYUAN_IMAGE_MODEL_CANDIDATES),
+)
+
+
 # 后续扩展时在此追加新厂商适配器
-PROVIDERS: List[Provider] = [SILICONFLOW, QIANWEN]
+PROVIDERS: List[Provider] = [SILICONFLOW, QIANWEN, ZHIPU, ARK, MINIMAX, HUNYUAN]
 
 
 def get_provider(provider_id: str) -> Optional[Provider]:

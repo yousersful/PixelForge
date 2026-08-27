@@ -260,6 +260,7 @@ class ImageToImageTab(QWidget):
     # ------------------------------------------------------------------
     def refresh_models(self) -> None:
         models = self.service.list_available_edit_models()
+        self._edit_models = models  # 缓存供尺寸下拉框按模型取值
         self.model_combo.clear()
         for m in models:
             self.model_combo.addItem(m.name, m.id)
@@ -275,7 +276,15 @@ class ImageToImageTab(QWidget):
 
     def _on_model_changed(self) -> None:
         self.size_combo.clear()
-        self.size_combo.addItems(["512x512", "768x768", "1024x1024"])
+        # 优先用当前模型的尺寸表（如 Seedream 支持 2K/4K，
+        # 且不接受低于其最小像素限制的小尺寸），找不到时回退通用列表
+        model_id = self.model_combo.currentData()
+        sizes = None
+        for m in getattr(self, "_edit_models", []):
+            if m.id == model_id and m.sizes:
+                sizes = m.sizes
+                break
+        self.size_combo.addItems(sizes or ["512x512", "768x768", "1024x1024"])
 
     # ------------------------------------------------------------------
     # 生成
