@@ -1,27 +1,38 @@
 """应用主窗口。
 
-布局：顶部工具栏（设置 / 清空历史）+ 中央多页签（生成 / 历史）。
+布局：左侧固定侧栏（新的创作 / 收藏夹 / 历史记录 / 恢复上次对话，
+底部设置）+ 中央页面栈。
+
+创作页当前仍承载 文生图 / 图生图 两个页签；
+对话式创作流上线后由此替换（见 doc/markdown/box1.md）。
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
-    QAction, QMainWindow, QMessageBox, QTabWidget, QToolBar,
+    QButtonGroup, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
+    QPushButton, QStackedWidget, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from pixelforge.core.image_service import ImageService
+from pixelforge.core.session_store import SessionStore
 from pixelforge.core.storage import HistoryStore
 from pixelforge.security.key_manager import KeyManager
+from pixelforge.ui.about_page import AboutPage
 from pixelforge.ui.generate_tab import GenerateTab
 from pixelforge.ui.favorites_panel import FavoritesPanel
 from pixelforge.ui.history_panel import HistoryPanel
 from pixelforge.ui.image_to_image_tab import ImageToImageTab
-from pixelforge.ui.settings_dialog import SettingsDialog
-from pathlib import Path
+from pixelforge.ui.settings_page import SettingsPage
 
 
 class MainWindow(QMainWindow):
     """PixelForge 主窗口。"""
+
+    # 页面索引
+    PAGE_CREATE, PAGE_FAV, PAGE_HISTORY, PAGE_SETTINGS, PAGE_ABOUT = range(5)
 
     def __init__(self, config) -> None:
         super().__init__()
@@ -32,6 +43,7 @@ class MainWindow(QMainWindow):
         self.key_manager = KeyManager(self.config.key_path)
         self.history = HistoryStore(self.config.history_path).connect()
         self.service = ImageService(self.config, self.key_manager, self.history)
+        self.sessions = SessionStore(config.sessions_dir)
 
         self._setup_ui()
         self._connect_signals()
@@ -42,47 +54,135 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _setup_ui(self) -> None:
         self.setWindowTitle("PixelForge - AI 图像生成")
-        self.setMinimumSize(720, 560)
+        self.setMinimumSize(860, 600)
 
-        # 中央页签
-        self.tabs = QTabWidget(self)
+        central = QWidget()
+        root = QHBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ---- 左侧栏 ----
+        sidebar = QWidget()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(230)
+        col = QVBoxLayout(sidebar)
+        col.setContentsMargins(12, 16, 12, 16)
+        col.setSpacing(6)
+
+        title = QLabel("PixelForge")
+        title.setObjectName("appTitle")
+        col.addWidget(title)
+        col.addSpacing(12)
+
+        self.btn_new = QPushButton("+  新的创作")
+        self.btn_new.setProperty("class", "primary")
+        self.btn_new.setCursor(Qt.PointingHandCursor)
+        col.addWidget(self.btn_new)
+        col.addSpacing(6)
+
+        self._nav_group = QButtonGroup(self)
+        self.nav_buttons = []
+        for label, page in [
+            ("☆  收藏夹", self.PAGE_FAV),
+            ("🕐  历史记录", self.PAGE_HISTORY),
+        ]:
+            btn = QPushButton(label)
+            btn.setProperty("class", "nav")
+            btn.setCheckable(True)
+            self._nav_group.addButton(btn)
+            btn.clicked.connect(lambda _=False, p=page: self.switch_page(p))
+            col.addWidget(btn)
+            self.nav_buttons.append(btn)
+
+        # 恢复上次对话（创作流上线后可用）
+        self.btn_restore = QPushButton("↺  恢复上次对话")
+        self.btn_restore.setProperty("class", "nav")
+        self.btn_restore.setEnabled(False)
+        self.btn_restore.setToolTip("对话式创作流将在后续更新中可用")
+        col.addWidget(self.btn_restore)
+
+        col.addStretch(1)
+
+        line = QFrame()
+        line.setProperty("class", "hline")
+        col.addWidget(line)
+
+        self.btn_about = QPushButton("关于 PixelForge")
+        self.btn_about.setProperty("class", "nav")
+        self.btn_about.clicked.connect(lambda: self.switch_page(self.PAGE_ABOUT))
+        col.addWidget(self.btn_about)
+
+        self.btn_settings = QPushButton("⚙  设置")
+        self.btn_settings.setProperty("class", "nav")
+        self.btn_settings.clicked.connect(lambda: self.switch_page(self.PAGE_SETTINGS))
+        col.addWidget(self.btn_settings)
+
+        root.addWidget(sidebar)
+
+        # ---- 中央页面栈 ----
+        self.stack = QStackedWidget()
+
+        # 创作页：暂以 文生图/图生图 页签承载
+        create_page = QWidget()
+        create_col = QVBoxLayout(create_page)
+        create_col.setContentsMargins(16, 16, 16, 16)
+        self.tabs = QTabWidget()
         self.generate_tab = GenerateTab(self.config, self.service, self)
         self.img2img_tab = ImageToImageTab(self.config, self.service, self)
-        self.history_panel = HistoryPanel(self.history, self)
-        self.favorites_panel = FavoritesPanel(self.service, self)
         self.tabs.addTab(self.generate_tab, "文生图")
         self.tabs.addTab(self.img2img_tab, "图生图")
-        self.tabs.addTab(self.history_panel, "历史")
-        self.tabs.addTab(self.favorites_panel, "收藏夹")
-        self.setCentralWidget(self.tabs)
+        create_col.addWidget(self.tabs)
+        self.stack.addWidget(create_page)
 
-        # 工具栏
-        toolbar = QToolBar("主工具栏", self)
-        toolbar.setMovable(False)
-        self.addToolBar(Qt.TopToolBarArea, toolbar)
+        self.favorites_panel = FavoritesPanel(self.service, self)
+        self.stack.addWidget(self.favorites_panel)
 
-        self.action_settings = QAction("设置", self)
-        self.action_clear = QAction("清空历史", self)
-        toolbar.addAction(self.action_settings)
-        toolbar.addAction(self.action_clear)
+        self.history_panel = HistoryPanel(self.history, self)
+        self.stack.addWidget(self.history_panel)
+
+        self.settings_page = SettingsPage(self.config, self.key_manager, self)
+        self.stack.addWidget(self.settings_page)
+
+        self.about_page = AboutPage(self)
+        self.stack.addWidget(self.about_page)
+
+        root.addWidget(self.stack, 1)
+        self.setCentralWidget(central)
 
     def _connect_signals(self) -> None:
-        self.action_settings.triggered.connect(self.open_settings)
-        self.action_clear.triggered.connect(self.clear_history)
         # 文生图 → 图生图“继续编辑”
         self.generate_tab.continue_edit_requested.connect(
             self._send_to_image_edit
         )
-        # 切换页签时刷新面板（收藏夹/历史）
-        self.tabs.currentChanged.connect(self._on_tab_changed)
+        # 设置保存 → 刷新模型列表 / 面板
+        self.settings_page.settings_changed.connect(self._on_settings_changed)
+        self.settings_page.back_requested.connect(
+            lambda: self.switch_page(self.PAGE_CREATE)
+        )
 
-    def _on_tab_changed(self, _index: int) -> None:
-        widget = self.tabs.currentWidget()
+    # ------------------------------------------------------------------
+    # 页面切换
+    # ------------------------------------------------------------------
+    def switch_page(self, page: int) -> None:
+        """切换到指定页面；收藏夹/历史在进入时刷新。"""
+        widget = self.stack.widget(page)
         if hasattr(widget, "refresh"):
             widget.refresh()
+        self.stack.setCurrentIndex(page)
+        # 侧栏选中态（收藏夹/历史两个 nav 按钮与页面对应）
+        for i, btn in enumerate(self.nav_buttons):
+            btn.setChecked(
+                (page == self.PAGE_FAV and i == 0)
+                or (page == self.PAGE_HISTORY and i == 1)
+            )
+
+    def _on_settings_changed(self) -> None:
+        self.generate_tab.refresh_models()
+        self.img2img_tab.refresh_models()
 
     def _send_to_image_edit(self, path: str) -> None:
         """把文生图结果发送到图生图页作为参考图，并切换过去。"""
+        self.switch_page(self.PAGE_CREATE)
         self.img2img_tab.set_reference(Path(path))
         self.img2img_tab.status.setText("已设为参考图，输入编辑指令继续生成")
         self.tabs.setCurrentWidget(self.img2img_tab)
@@ -105,32 +205,3 @@ class MainWindow(QMainWindow):
         self.config.save()
         self.history.close()
         super().closeEvent(event)
-
-    # ------------------------------------------------------------------
-    # 动作
-    # ------------------------------------------------------------------
-    def open_settings(self) -> None:
-        """打开设置对话框。"""
-        dialog = SettingsDialog(
-            self.config,
-            self.key_manager,
-            parent=self,
-        )
-        if dialog.exec_() == SettingsDialog.Accepted:
-            # 设置变更后刷新生成页的模型/尺寸列表
-            self.generate_tab.refresh_models()
-            self.img2img_tab.refresh_models()
-            self.history_panel.refresh()
-
-    def clear_history(self) -> None:
-        """清空全部生成历史。"""
-        if (
-            QMessageBox.question(
-                self,
-                "确认",
-                "确定要清空所有生成历史吗？此操作不可撤销。",
-            )
-            == QMessageBox.Yes
-        ):
-            self.history.clear()
-            self.history_panel.refresh()

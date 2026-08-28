@@ -5,6 +5,7 @@ from PyQt5.QtWidgets import QApplication
 
 from pixelforge.config import AppConfig
 from pixelforge.ui.main_window import MainWindow
+from pixelforge.ui.theme import apply_theme
 
 
 def main() -> int:
@@ -15,6 +16,8 @@ def main() -> int:
 
     config = AppConfig()
     config.load()
+
+    apply_theme(app, config)
 
     window = MainWindow(config)
     window.show()

@@ -33,6 +33,7 @@ class Provider:
     api_base: str                 # API 端点
     api_key_env: str              # 环境变量名（可选）
     models: List[ModelInfo] = field(default_factory=list)
+    doc_url: str = ""             # 获取 API Key 的控制台页面
 
 
 # ----------------------------------------------------------------------
@@ -245,6 +246,7 @@ SILICONFLOW = Provider(
     name="硅基流动 (SiliconFlow)",
     api_base="https://api.siliconflow.cn/v1",
     api_key_env="SILICONFLOW_API_KEY",
+    doc_url="https://cloud.siliconflow.cn/account/ak",
     # 无网络时的回退列表，仅含通常可用的模型
     models=make_models(
         [
@@ -261,6 +263,7 @@ QIANWEN = Provider(
     name="千问 / 百炼 (Qwen)",
     api_base="",
     api_key_env="DASHSCOPE_API_KEY",
+    doc_url="https://bailian.console.aliyun.com/?apiKey=1",
     models=make_models(QIANWEN_IMAGE_MODEL_CANDIDATES),
 )
 
@@ -271,6 +274,7 @@ ZHIPU = Provider(
     name="智谱 (BigModel)",
     api_base="https://open.bigmodel.cn/api/paas/v4",
     api_key_env="ZHIPU_API_KEY",
+    doc_url="https://open.bigmodel.cn/usercenter/apikeys",
     models=make_models(ZHIPU_IMAGE_MODEL_CANDIDATES),
 )
 
@@ -281,6 +285,7 @@ ARK = Provider(
     name="火山方舟 (Volcano Ark)",
     api_base="https://ark.cn-beijing.volces.com/api/v3",
     api_key_env="ARK_API_KEY",
+    doc_url="https://console.volcengine.com/ark/region:ark-cn-beijing/apiKey",
     models=make_models(ARK_IMAGE_MODEL_CANDIDATES),
 )
 
@@ -289,6 +294,7 @@ MINIMAX = Provider(
     name="MiniMax",
     api_base="https://api.minimaxi.com/v1",
     api_key_env="MINIMAX_API_KEY",
+    doc_url="https://platform.minimaxi.com/user-center/basic-information/interface-key",
     models=make_models(MINIMAX_IMAGE_MODEL_CANDIDATES),
 )
 
@@ -299,6 +305,7 @@ HUNYUAN = Provider(
     name="腾讯混元 (Hy-Image)",
     api_base="https://tokenhub.tencentmaas.com/v1",
     api_key_env="HUNYUAN_API_KEY",
+    doc_url="https://tokenhub.tencentmaas.com",
     models=make_models(HUNYUAN_IMAGE_MODEL_CANDIDATES),
 )
 

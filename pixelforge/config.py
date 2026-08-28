@@ -23,6 +23,7 @@ class AppConfig:
     """
 
     APP_NAME = "PixelForge"
+    REPO_URL = "https://github.com/yousersful/PixelForge"
     DEFAULT_CONFIG: dict = {
         "window": {"width": 1000, "height": 720, "maximized": False},
         "model": {
