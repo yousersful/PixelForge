@@ -58,13 +58,29 @@ def build_qss(theme: str = "light") -> str:
     return f"""
 * {{
     font-family: {_FONT_FAMILY};
-    font-size: 13px;
+    font-size: 14px;
     color: {t['text']};
     selection-background-color: {t['accent']};
     selection-color: {t['accent_on']};
 }}
 QMainWindow, QDialog {{ background-color: {t['bg']}; }}
-QWidget {{ background: transparent; }}
+/* 普通容器必须显式绘制主题背景：透明会漏出系统原生调色板
+   （浅色主题在系统深色下会出现黑块） */
+QWidget {{ background-color: {t['bg']}; }}
+QLabel, QCheckBox, QRadioButton {{
+    background: transparent;
+}}
+QMenuBar {{
+    background-color: {t['surface']};
+}}
+QMenu {{
+    background-color: {t['surface']};
+    border: 1px solid {t['outline']};
+    border-radius: 8px;
+    padding: 4px;
+}}
+QMenu::item {{ padding: 6px 20px; border-radius: 6px; }}
+QMenu::item:selected {{ background-color: {t['accent_soft']}; color: {t['accent_text']}; }}
 QToolTip {{
     background-color: {t['surface']};
     color: {t['text']};
@@ -79,7 +95,7 @@ QWidget#sidebar {{
     border-right: 1px solid {t['outline']};
 }}
 QLabel#appTitle {{
-    font-size: 20px;
+    font-size: 22px;
     font-weight: 700;
     letter-spacing: 0.5px;
     color: {t['text']};
@@ -91,7 +107,7 @@ QPushButton.nav {{
     border: none;
     border-radius: 10px;
     color: {t['text_sub']};
-    font-size: 14px;
+    font-size: 15px;
     background: transparent;
 }}
 QPushButton.nav:hover {{ background-color: {t['surface2']}; color: {t['text']}; }}
@@ -174,15 +190,16 @@ QFrame[class="card"] {{
     border-radius: 14px;
 }}
 QLabel[class="pageTitle"] {{
-    font-size: 22px;
+    font-size: 24px;
     font-weight: 700;
     background: transparent;
 }}
 QLabel[class="pageCaption"] {{
+    font-size: 15px;
     color: {t['text_sub']};
     background: transparent;
 }}
-QLabel[class="hint"] {{ color: {t['text_sub']}; background: transparent; }}
+QLabel[class="hint"] {{ font-size: 12px; color: {t['text_sub']}; background: transparent; }}
 QLabel[class="statusOk"] {{ color: {t['accent_text']}; background: transparent; }}
 QLabel[class="statusErr"] {{ color: {t['danger']}; background: transparent; }}
 

@@ -69,7 +69,7 @@ class _ThumbLabel(QLabel):
         self.index = index
         self.setFixedSize(THUMB_SIZE, THUMB_SIZE)
         self.setAlignment(Qt.AlignCenter)
-        self.setStyleSheet("border:2px solid #555; background:#1e1e1e;")
+        self.setStyleSheet("border:2px solid rgba(128,128,128,0.45); background:rgba(128,128,128,0.10);")
         self.setScaledContents(False)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
@@ -79,9 +79,9 @@ class _ThumbLabel(QLabel):
 
     def set_selected(self, selected: bool) -> None:
         self.setStyleSheet(
-            "border:2px solid #4a90d9; background:#1e1e1e;"
+            "border:2px solid #0891B2; background:rgba(128,128,128,0.10);"
             if selected
-            else "border:2px solid #555; background:#1e1e1e;"
+            else "border:2px solid rgba(128,128,128,0.45); background:rgba(128,128,128,0.10);"
         )
 
 
@@ -149,7 +149,7 @@ class ImageToImageTab(QWidget):
         self.preview.setAlignment(Qt.AlignCenter)
         self.preview.setMinimumHeight(260)
         self.preview.setStyleSheet(
-            "background:#1e1e1e; color:#888; border:1px dashed #555;"
+            "background:rgba(128,128,128,0.10); color:#888; border:1px dashed rgba(128,128,128,0.45);"
         )
         self.preview.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.preview.setContextMenuPolicy(3)
@@ -379,7 +379,7 @@ class ImageToImageTab(QWidget):
     def _on_done(self, paths: List[Path]) -> None:
         self._current_paths = paths
         self._current_index = 0
-        self.preview.setStyleSheet("background:#1e1e1e; border:1px solid #444;")
+        self.preview.setStyleSheet("background:rgba(128,128,128,0.10); border:1px solid rgba(128,128,128,0.45);")
         self._show_image(0)
         self._populate_thumbs()
         self.status.setText(f"完成，生成 {len(paths)} 张图片")
