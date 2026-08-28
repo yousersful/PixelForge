@@ -230,6 +230,8 @@ class SettingsPage(QWidget):
         self.theme_combo.setCurrentIndex(
             max(0, self.theme_combo.findData(config.get("appearance.theme", "system")))
         )
+        # 预览式生效：选中即切换主题，取消回退，保存才落盘
+        self.theme_combo.currentIndexChanged.connect(self._preview_theme)
         gform.addRow("窗口色调:", self.theme_combo)
         theme_hint = QLabel("设定窗口的主色调：浅色，深色，或是跟随系统")
         theme_hint.setProperty("class", "hint")
@@ -309,6 +311,12 @@ class SettingsPage(QWidget):
         self.nav_general.setChecked(index == 0)
         self.nav_provider.setChecked(index == 1)
 
+    def _preview_theme(self) -> None:
+        """主题下拉变化的瞬间即时预览（不落盘）。"""
+        from PyQt5.QtWidgets import QApplication
+        value = self.theme_combo.currentData()
+        QApplication.instance().setStyleSheet(build_qss(resolve_theme(value)))
+
     def _browse_dir(self) -> None:
         path = QFileDialog.getExistingDirectory(
             self, "选择图片保存目录", self.dir_edit.text()
@@ -317,10 +325,15 @@ class SettingsPage(QWidget):
             self.dir_edit.setText(path)
 
     def _on_cancel(self) -> None:
-        # 还原界面值
+        # 还原界面值（含主题预览的回退）
+        theme_value = self.config.get("appearance.theme", "system")
+        self.theme_combo.blockSignals(True)
         self.theme_combo.setCurrentIndex(
-            max(0, self.theme_combo.findData(self.config.get("appearance.theme", "system")))
+            max(0, self.theme_combo.findData(theme_value))
         )
+        self.theme_combo.blockSignals(False)
+        from PyQt5.QtWidgets import QApplication
+        QApplication.instance().setStyleSheet(build_qss(resolve_theme(theme_value)))
         self.dir_edit.setText(str(self.config.effective_image_dir))
         for card in self.provider_cards:
             card.base_url_edit.setText(
