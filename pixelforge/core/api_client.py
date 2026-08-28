@@ -73,12 +73,15 @@ class GenerationResult:
 class SiliconFlowClient:
     """硅基流动图像生成客户端。"""
 
-    def __init__(self, provider: Provider, api_key: str) -> None:
+    # 单次请求最多生成几张（不支持批量的厂商由服务层循环调用补足）
+    max_batch = 4
+
+    def __init__(self, provider: Provider, api_key: str, base_url: str = "") -> None:
         if not api_key:
             raise ApiError("缺少 API Key，请在设置中填写")
         self.provider = provider
         self.api_key = api_key
-        self.base = provider.api_base
+        self.base = (base_url or provider.api_base).rstrip("/")
         self.timeout = 90
 
     # ------------------------------------------------------------------
@@ -321,10 +324,11 @@ class ZhipuClient(SiliconFlowClient):
       - 不支持 negative_prompt / 参考图 / seed，传入时忽略
     """
 
+    max_batch = 1  # 智谱单次固定返回一张
+
     def __init__(self, provider: Provider, api_key: str, base_url: str = "") -> None:
-        super().__init__(provider, api_key)
+        super().__init__(provider, api_key, base_url)
         # 允许用户在设置中覆盖 base（默认 https://open.bigmodel.cn/api/paas/v4）
-        self.base = (base_url or provider.api_base).rstrip("/")
 
     def list_image_models(self) -> List[ModelInfo]:
         return [
@@ -387,9 +391,10 @@ class ArkClient(SiliconFlowClient):
       - 响应 data[].url；模型需在方舟控制台开通，否则报 ModelNotOpen
     """
 
+    max_batch = 1  # Seedream 单次固定返回一张（多主体用 sequential_image_generation，暂未接入）
+
     def __init__(self, provider: Provider, api_key: str, base_url: str = "") -> None:
-        super().__init__(provider, api_key)
-        self.base = (base_url or provider.api_base).rstrip("/")
+        super().__init__(provider, api_key, base_url)
 
     def list_image_models(self) -> List[ModelInfo]:
         return [
@@ -458,6 +463,8 @@ class MiniMaxClient:
       响应：{"data": {"image_urls": [...]}, "base_resp": {"status_code": 0}}
       base_resp.status_code == 0 才是成功，图片 URL 24 小时有效。
     """
+
+    max_batch = 9  # MiniMax 单次最多 9 张（n 参数）
 
     def __init__(self, provider: Provider, api_key: str, base_url: str = "") -> None:
         if not api_key:
@@ -576,9 +583,10 @@ class HunyuanClient(SiliconFlowClient):
       同步返回；size 面积上限 1024x1024。
     """
 
+    max_batch = 1  # 混元单次固定返回一张
+
     def __init__(self, provider: Provider, api_key: str, base_url: str = "") -> None:
-        super().__init__(provider, api_key)
-        self.base = (base_url or provider.api_base).rstrip("/")
+        super().__init__(provider, api_key, base_url)
 
     def list_image_models(self) -> List[ModelInfo]:
         return [
@@ -645,6 +653,8 @@ class QianwenClient:
       3) 结果在 choices[0].message.content[].image（带签名的 OSS URL）
     """
 
+    max_batch = 4  # 千问 parameters.n 支持多张
+
     def __init__(self, provider: Provider, api_key: str, base_url: str = "") -> None:
         if not api_key:
             raise ApiError("缺少 API Key，请在设置中填写")
@@ -652,6 +662,12 @@ class QianwenClient:
         self.api_key = api_key
         # 用户工作区专属 URL，如 ...maas.aliyuncs.com/compatible-mode/v1
         self.base = (base_url or provider.api_base).rstrip("/")
+        if not self.base:
+            raise ApiError(
+                "千问（百炼）需要工作区专属 API 地址：请打开 [设置]，"
+                "在「API 地址」填入 DashScope 的工作区 URL"
+                "（形如 https://xxx.maas.aliyuncs.com/compatible-mode/v1）"
+            )
         self.timeout = 90
 
     def _native_base(self) -> str:
@@ -826,7 +842,7 @@ def get_client(
         return MiniMaxClient(provider, api_key, base_url)
     if provider.id == "hunyuan":
         return HunyuanClient(provider, api_key, base_url)
-    return SiliconFlowClient(provider, api_key)
+    return SiliconFlowClient(provider, api_key, base_url)
 
 
 def json_dumps(obj) -> str:

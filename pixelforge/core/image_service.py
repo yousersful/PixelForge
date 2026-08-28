@@ -42,6 +42,21 @@ class ImageService:
         provider = get_provider(self._provider_id()) or get_provider("siliconflow")
         return get_client(provider, api_key, self._base_url())
 
+    def _split_batches(self, client, num_images: int) -> List[int]:
+        """把请求张数拆成多次调用的张数列表。
+
+        部分厂商单次只返回一张（如 Seedream/智谱/混元），由服务层
+        循环调用补足用户要的张数。
+        """
+        per = max(1, getattr(client, "max_batch", 1))
+        batches: List[int] = []
+        remaining = max(1, num_images)
+        while remaining > 0:
+            n = min(per, remaining)
+            batches.append(n)
+            remaining -= n
+        return batches
+
     def _client_or_none(self):
         """按当前 Provider 创建客户端；无 Key 返回 None。"""
         api_key = self.key_manager.load(self._provider_id())
@@ -119,27 +134,27 @@ class ImageService:
         高级参数（guidance_scale 等）为 None 时使用模型默认。
         """
         client = self._client()
-        result = client.generate(
-            prompt, model_id, size, num_images,
-            negative_prompt=negative_prompt,
-            guidance_scale=guidance_scale,
-            num_inference_steps=num_inference_steps,
-            cfg_scale=cfg_scale,
-        )
-
         saved: List[Path] = []
-        for idx, img_bytes in enumerate(result.images):
-            path = self._save_image(img_bytes)
-            saved.append(path)
-            self.history.add(
-                HistoryRecord(
-                    prompt=prompt,
-                    model=model_id,
-                    size=size,
-                    path=str(path),
-                    seed=result.seed,
-                )
+        for batch_n in self._split_batches(client, num_images):
+            result = client.generate(
+                prompt, model_id, size, batch_n,
+                negative_prompt=negative_prompt,
+                guidance_scale=guidance_scale,
+                num_inference_steps=num_inference_steps,
+                cfg_scale=cfg_scale,
             )
+            for img_bytes in result.images:
+                path = self._save_image(img_bytes)
+                saved.append(path)
+                self.history.add(
+                    HistoryRecord(
+                        prompt=prompt,
+                        model=model_id,
+                        size=size,
+                        path=str(path),
+                        seed=result.seed,
+                    )
+                )
         return saved
 
     # ------------------------------------------------------------------
@@ -160,27 +175,27 @@ class ImageService:
         """图生图：以参考图 + 文本指令生成图片，返回保存路径列表。"""
         client = self._client()
         image_data = self._to_data_url(ref_image_path)
-        result = client.generate(
-            prompt, model_id, size, num_images,
-            image=image_data, negative_prompt=negative_prompt,
-            guidance_scale=guidance_scale,
-            num_inference_steps=num_inference_steps,
-            cfg_scale=cfg_scale,
-        )
-
         saved: List[Path] = []
-        for img_bytes in result.images:
-            path = self._save_image(img_bytes)
-            saved.append(path)
-            self.history.add(
-                HistoryRecord(
-                    prompt=prompt,
-                    model=model_id,
-                    size=size,
-                    path=str(path),
-                    seed=result.seed,
-                )
+        for batch_n in self._split_batches(client, num_images):
+            result = client.generate(
+                prompt, model_id, size, batch_n,
+                image=image_data, negative_prompt=negative_prompt,
+                guidance_scale=guidance_scale,
+                num_inference_steps=num_inference_steps,
+                cfg_scale=cfg_scale,
             )
+            for img_bytes in result.images:
+                path = self._save_image(img_bytes)
+                saved.append(path)
+                self.history.add(
+                    HistoryRecord(
+                        prompt=prompt,
+                        model=model_id,
+                        size=size,
+                        path=str(path),
+                        seed=result.seed,
+                    )
+                )
         return saved
 
     @staticmethod
