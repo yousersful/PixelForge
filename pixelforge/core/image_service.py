@@ -34,13 +34,21 @@ class ImageService:
             f"providers.{self._provider_id()}.base_url", ""
         ) or ""
 
+    def _custom_model_ids(self) -> List[str]:
+        """自定义厂商：用户在设置中以逗号分隔录入的模型 ID。"""
+        raw = self.config.get(f"providers.{self._provider_id()}.models", "") or ""
+        return [m.strip() for m in raw.split(",") if m.strip()]
+
     def _client(self):
         """按当前 Provider 创建对应客户端（无 Key 时抛异常）。"""
         api_key = self.key_manager.load(self._provider_id())
         if not api_key:
             raise RuntimeError("未设置 API Key，请先在设置中填写")
         provider = get_provider(self._provider_id()) or get_provider("siliconflow")
-        return get_client(provider, api_key, self._base_url())
+        return get_client(
+            provider, api_key, self._base_url(),
+            model_ids=self._custom_model_ids(),
+        )
 
     def _split_batches(self, client, num_images: int) -> List[int]:
         """把请求张数拆成多次调用的张数列表。
@@ -63,7 +71,10 @@ class ImageService:
         if not api_key:
             return None
         provider = get_provider(self._provider_id()) or get_provider("siliconflow")
-        return get_client(provider, api_key, self._base_url())
+        return get_client(
+            provider, api_key, self._base_url(),
+            model_ids=self._custom_model_ids(),
+        )
 
     # ------------------------------------------------------------------
     # Key

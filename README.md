@@ -4,7 +4,7 @@
 
 ## 功能
 
-- **多厂商接入**：内置六家图像生成服务，切换厂商只需在设置里填对应 Key
+- **多厂商接入**：内置六家图像生成服务 + 自定义 OpenAI 协议厂商（填 API 地址、模型 ID 即可接入任意兼容网关），切换厂商只需在设置里填对应 Key
   - 硅基流动（SiliconFlow）：Kolors / Qwen-Image / FLUX 等开源模型聚合
   - 千问 / 百炼（DashScope 工作区）：wan2.7 系列等
   - 智谱 BigModel：CogView-4 / CogView-3-Flash（免费）/ GLM-Image
@@ -98,6 +98,7 @@ python3 -m venv .venv
 - [x] 收藏夹
 - [x] 历史导出（JSON/CSV）
 - [x] 多厂商适配器（硅基流动 / 千问 / 智谱 / 火山方舟 / MiniMax / 腾讯混元）
+- [x] 自定义 OpenAI 协议厂商 + 设置内【测试连接】连通性校验
 - [ ] 打包分发（pyinstaller / 安装包）
 - [ ] 单元测试
 - [ ] 视频生成

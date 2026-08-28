@@ -303,8 +303,20 @@ HUNYUAN = Provider(
 )
 
 
+# 自定义厂商：OpenAI 协议，base URL 与模型 ID 由用户在设置中填写
+CUSTOM = Provider(
+    id="custom",
+    name="自定义 (OpenAI 协议)",
+    api_base="",
+    api_key_env="CUSTOM_API_KEY",
+    models=[],  # 动态来自设置中用户填写的模型 ID
+)
+
+
 # 后续扩展时在此追加新厂商适配器
-PROVIDERS: List[Provider] = [SILICONFLOW, QIANWEN, ZHIPU, ARK, MINIMAX, HUNYUAN]
+PROVIDERS: List[Provider] = [
+    SILICONFLOW, QIANWEN, ZHIPU, ARK, MINIMAX, HUNYUAN, CUSTOM,
+]
 
 
 def get_provider(provider_id: str) -> Optional[Provider]:

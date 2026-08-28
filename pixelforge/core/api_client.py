@@ -828,10 +828,43 @@ def _download(url: str) -> bytes:
         return resp.read()
 
 
+class CustomClient(SiliconFlowClient):
+    """自定义厂商（OpenAI 协议）客户端。
+
+    base URL 与模型 ID 均由用户在设置中填写；模型列表直接采用
+    用户录入的 ID（大多数兼容网关不提供 /models 或不含图像模型）。
+    图生图暂不开放：OpenAI 协议本身没有统一的图像编辑端点。
+    """
+
+    max_batch = 4
+
+    CUSTOM_FALLBACK_SIZES = [
+        "1024x1024", "768x1344", "1344x768", "1152x864", "864x1152", "512x512",
+    ]
+
+    def __init__(self, provider: Provider, api_key: str, base_url: str = "",
+                 model_ids: Optional[List[str]] = None) -> None:
+        super().__init__(provider, api_key, base_url)
+        self.model_ids = [m for m in (model_ids or []) if m]
+
+    def list_image_models(self) -> List[ModelInfo]:
+        return [
+            ModelInfo(id=mid, name=mid, sizes=list(self.CUSTOM_FALLBACK_SIZES))
+            for mid in self.model_ids
+        ]
+
+    def list_edit_models(self) -> List[ModelInfo]:
+        return []
+
+
 def get_client(
-    provider: Provider, api_key: str, base_url: str = ""
+    provider: Provider, api_key: str, base_url: str = "",
+    model_ids: Optional[List[str]] = None,
 ):
-    """按 Provider 类型返回对应的图像生成客户端。"""
+    """按 Provider 类型返回对应的图像生成客户端。
+
+    model_ids 仅自定义厂商使用：用户在设置中录入的模型 ID 列表。
+    """
     if provider.id == "qianwen":
         return QianwenClient(provider, api_key, base_url)
     if provider.id == "zhipu":
@@ -842,6 +875,8 @@ def get_client(
         return MiniMaxClient(provider, api_key, base_url)
     if provider.id == "hunyuan":
         return HunyuanClient(provider, api_key, base_url)
+    if provider.id == "custom":
+        return CustomClient(provider, api_key, base_url, model_ids)
     return SiliconFlowClient(provider, api_key, base_url)
 
 
