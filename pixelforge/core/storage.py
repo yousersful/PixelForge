@@ -23,6 +23,7 @@ class HistoryRecord:
     path: str
     seed: Optional[int] = None
     created_at: str = ""  # ISO 时间，留空则自动填充
+    duration: Optional[float] = None  # 生成耗时（秒），旧记录为 None
     id: Optional[int] = None
 
 
@@ -55,6 +56,13 @@ class HistoryStore:
                 )
                 """
             )
+            # 旧库迁移：补 duration 列（已存在则忽略）
+            try:
+                self._conn.execute(
+                    "ALTER TABLE history ADD COLUMN duration REAL"
+                )
+            except sqlite3.OperationalError:
+                pass
         return self
 
     def close(self) -> None:
@@ -73,8 +81,8 @@ class HistoryStore:
         with self._lock:
             cur = self._conn.execute(
                 """
-                INSERT INTO history (prompt, model, size, path, seed, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO history (prompt, model, size, path, seed, created_at, duration)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.prompt,
@@ -83,6 +91,7 @@ class HistoryStore:
                     record.path,
                     record.seed,
                     record.created_at,
+                    record.duration,
                 ),
             )
             self._conn.commit()
@@ -93,14 +102,14 @@ class HistoryStore:
         """返回最近的生成记录（倒序）。"""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, prompt, model, size, path, seed, created_at "
+                "SELECT id, prompt, model, size, path, seed, created_at, duration "
                 "FROM history ORDER BY id DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         return [
             HistoryRecord(
                 id=r[0], prompt=r[1], model=r[2], size=r[3],
-                path=r[4], seed=r[5], created_at=r[6],
+                path=r[4], seed=r[5], created_at=r[6], duration=r[7],
             )
             for r in rows
         ]

@@ -5,11 +5,13 @@
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import List, Optional
 
 from pixelforge.core.api_client import get_client
 from pixelforge.core.storage import HistoryRecord, HistoryStore
+from pixelforge.models.gen_modes import mode_kwargs
 from pixelforge.models.providers import ModelInfo, Provider, get_provider
 from pixelforge.security.key_manager import KeyManager
 
@@ -138,22 +140,31 @@ class ImageService:
         guidance_scale: float | None = None,
         num_inference_steps: int | None = None,
         cfg_scale: float | None = None,
+        mode: str | None = None,
     ) -> List[Path]:
         """生成图片并保存到本地，返回保存路径列表。
 
-        同时写入历史记录。若未配置 Key 则抛出异常。
-        高级参数（guidance_scale 等）为 None 时使用模型默认。
+        同时写入历史记录（含用时）。若未配置 Key 则抛出异常。
+        mode 为生成模式 ID（快速/标准/创造），其预设参数与显式传入的
+        高级参数合并（显式值优先）。
         """
         client = self._client()
+        presets = mode_kwargs(mode)
         saved: List[Path] = []
         for batch_n in self._split_batches(client, num_images):
+            started = time.monotonic()
             result = client.generate(
                 prompt, model_id, size, batch_n,
                 negative_prompt=negative_prompt,
-                guidance_scale=guidance_scale,
-                num_inference_steps=num_inference_steps,
+                guidance_scale=guidance_scale
+                if guidance_scale is not None
+                else presets.get("guidance_scale"),
+                num_inference_steps=num_inference_steps
+                if num_inference_steps is not None
+                else presets.get("num_inference_steps"),
                 cfg_scale=cfg_scale,
             )
+            duration = round(time.monotonic() - started, 1)
             for img_bytes in result.images:
                 path = self._save_image(img_bytes)
                 saved.append(path)
@@ -164,6 +175,7 @@ class ImageService:
                         size=size,
                         path=str(path),
                         seed=result.seed,
+                        duration=duration,
                     )
                 )
         return saved
@@ -182,19 +194,27 @@ class ImageService:
         guidance_scale: float | None = None,
         num_inference_steps: int | None = None,
         cfg_scale: float | None = None,
+        mode: str | None = None,
     ) -> List[Path]:
         """图生图：以参考图 + 文本指令生成图片，返回保存路径列表。"""
         client = self._client()
         image_data = self._to_data_url(ref_image_path)
+        presets = mode_kwargs(mode)
         saved: List[Path] = []
         for batch_n in self._split_batches(client, num_images):
+            started = time.monotonic()
             result = client.generate(
                 prompt, model_id, size, batch_n,
                 image=image_data, negative_prompt=negative_prompt,
-                guidance_scale=guidance_scale,
-                num_inference_steps=num_inference_steps,
+                guidance_scale=guidance_scale
+                if guidance_scale is not None
+                else presets.get("guidance_scale"),
+                num_inference_steps=num_inference_steps
+                if num_inference_steps is not None
+                else presets.get("num_inference_steps"),
                 cfg_scale=cfg_scale,
             )
+            duration = round(time.monotonic() - started, 1)
             for img_bytes in result.images:
                 path = self._save_image(img_bytes)
                 saved.append(path)
@@ -205,6 +225,7 @@ class ImageService:
                         size=size,
                         path=str(path),
                         seed=result.seed,
+                        duration=duration,
                     )
                 )
         return saved

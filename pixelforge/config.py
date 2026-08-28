@@ -18,6 +18,7 @@ class AppConfig:
         config.json      # 本配置文件（不含密钥）
         history.db       # 生成历史 (SQLite)
         images/          # 生成的图片
+        sessions/        # 创作会话（对话式 UI 的本地持久化）
         key.bin          # 加密的 API Key
     """
 
@@ -42,6 +43,7 @@ class AppConfig:
         self.config_path = self.config_dir / "config.json"
         self.image_dir = self.config_dir / "images"
         self.history_path = self.config_dir / "history.db"
+        self.sessions_dir = self.config_dir / "sessions"
         self.key_path = self.config_dir / "key.bin"
 
         self._data = json.loads(json.dumps(self.DEFAULT_CONFIG))  # 深拷贝默认值

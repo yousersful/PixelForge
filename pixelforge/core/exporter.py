@@ -16,7 +16,7 @@ from typing import List, Union
 from pixelforge.core.storage import HistoryRecord
 
 # 导出字段顺序
-_FIELDS = ["time", "prompt", "model", "size", "seed", "image"]
+_FIELDS = ["time", "prompt", "model", "size", "seed", "duration", "image"]
 
 
 def _record_dict(rec: HistoryRecord, image_ref: str | None = None) -> dict:
@@ -27,6 +27,7 @@ def _record_dict(rec: HistoryRecord, image_ref: str | None = None) -> dict:
         "model": rec.model,
         "size": rec.size,
         "seed": rec.seed,
+        "duration": rec.duration,  # 生成耗时（秒），旧记录为 None
         "image": image_ref if image_ref is not None else rec.path,
     }
 
