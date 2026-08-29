@@ -95,7 +95,9 @@ class MainWindow(QMainWindow):
         self.btn_restore = QPushButton("↺  恢复上次对话")
         self.btn_restore.setProperty("class", "nav")
         self.btn_restore.setEnabled(bool(self.sessions.list_sessions(limit=1)))
-        self.btn_restore.clicked.connect(self._restore_last_session)
+        self.btn_restore.clicked.connect(
+            lambda: self._restore_last_session()
+        )
         col.addWidget(self.btn_restore)
 
         col.addStretch(1)
@@ -139,13 +141,20 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
     def _connect_signals(self) -> None:
-        # 新的创作：归档当前会话并开始新会话
-        self.btn_new.clicked.connect(self.chat_page.new_session)
+        # 新的创作：切回创作页、归档当前会话并开始新会话。
+        # 无论当前在哪个页面，点击后都应看到"清空并回到创作页"的反馈
+        self.btn_new.clicked.connect(lambda: self._start_new_session())
         # 设置保存 → 刷新模型列表 / 面板
         self.settings_page.settings_changed.connect(self._on_settings_changed)
         self.settings_page.back_requested.connect(
             lambda: self.switch_page(self.PAGE_CREATE)
         )
+
+    def _start_new_session(self) -> None:
+        """「新的创作」：归档当前会话、切回创作页并聚焦输入框。"""
+        self.switch_page(self.PAGE_CREATE)
+        self.chat_page.new_session()
+        self.chat_page.prompt_edit.setFocus()
 
     # ------------------------------------------------------------------
     # 页面切换
