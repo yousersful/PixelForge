@@ -8,12 +8,10 @@
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QButtonGroup, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
-    QPushButton, QStackedWidget, QTabWidget, QVBoxLayout, QWidget,
+    QPushButton, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from pixelforge.core.image_service import ImageService
@@ -21,10 +19,9 @@ from pixelforge.core.session_store import SessionStore
 from pixelforge.core.storage import HistoryStore
 from pixelforge.security.key_manager import KeyManager
 from pixelforge.ui.about_page import AboutPage
-from pixelforge.ui.generate_tab import GenerateTab
+from pixelforge.ui.chat_tab import ChatPage
 from pixelforge.ui.favorites_panel import FavoritesPanel
 from pixelforge.ui.history_panel import HistoryPanel
-from pixelforge.ui.image_to_image_tab import ImageToImageTab
 from pixelforge.ui.settings_page import SettingsPage
 
 
@@ -94,11 +91,11 @@ class MainWindow(QMainWindow):
             col.addWidget(btn)
             self.nav_buttons.append(btn)
 
-        # 恢复上次对话（创作流上线后可用）
+        # 恢复上次对话
         self.btn_restore = QPushButton("↺  恢复上次对话")
         self.btn_restore.setProperty("class", "nav")
-        self.btn_restore.setEnabled(False)
-        self.btn_restore.setToolTip("对话式创作流将在后续更新中可用")
+        self.btn_restore.setEnabled(bool(self.sessions.list_sessions(limit=1)))
+        self.btn_restore.clicked.connect(self._restore_last_session)
         col.addWidget(self.btn_restore)
 
         col.addStretch(1)
@@ -122,17 +119,9 @@ class MainWindow(QMainWindow):
         # ---- 中央页面栈 ----
         self.stack = QStackedWidget()
 
-        # 创作页：暂以 文生图/图生图 页签承载
-        create_page = QWidget()
-        create_col = QVBoxLayout(create_page)
-        create_col.setContentsMargins(16, 16, 16, 16)
-        self.tabs = QTabWidget()
-        self.generate_tab = GenerateTab(self.config, self.service, self)
-        self.img2img_tab = ImageToImageTab(self.config, self.service, self)
-        self.tabs.addTab(self.generate_tab, "文生图")
-        self.tabs.addTab(self.img2img_tab, "图生图")
-        create_col.addWidget(self.tabs)
-        self.stack.addWidget(create_page)
+        # 创作页：对话式创作流
+        self.chat_page = ChatPage(self.config, self.service, self.sessions, self)
+        self.stack.addWidget(self.chat_page)
 
         self.favorites_panel = FavoritesPanel(self.service, self)
         self.stack.addWidget(self.favorites_panel)
@@ -150,10 +139,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
     def _connect_signals(self) -> None:
-        # 文生图 → 图生图“继续编辑”
-        self.generate_tab.continue_edit_requested.connect(
-            self._send_to_image_edit
-        )
+        # 新的创作：归档当前会话并开始新会话
+        self.btn_new.clicked.connect(self.chat_page.new_session)
         # 设置保存 → 刷新模型列表 / 面板
         self.settings_page.settings_changed.connect(self._on_settings_changed)
         self.settings_page.back_requested.connect(
@@ -164,10 +151,11 @@ class MainWindow(QMainWindow):
     # 页面切换
     # ------------------------------------------------------------------
     def switch_page(self, page: int) -> None:
-        """切换到指定页面；收藏夹/历史在进入时刷新。"""
+        """切换到指定页面；进入时刷新对应面板。"""
         widget = self.stack.widget(page)
         if hasattr(widget, "refresh"):
             widget.refresh()
+        self.btn_restore.setEnabled(bool(self.sessions.list_sessions(limit=1)))
         self.stack.setCurrentIndex(page)
         # 侧栏选中态（收藏夹/历史两个 nav 按钮与页面对应）
         for i, btn in enumerate(self.nav_buttons):
@@ -177,16 +165,14 @@ class MainWindow(QMainWindow):
             )
 
     def _on_settings_changed(self) -> None:
-        self.generate_tab.refresh_models()
-        self.img2img_tab.refresh_models()
+        self.chat_page.refresh_models()
 
-    def _send_to_image_edit(self, path: str) -> None:
-        """把文生图结果发送到图生图页作为参考图，并切换过去。"""
+    def _restore_last_session(self) -> None:
+        """恢复上次对话并回到创作页。"""
+        if self.chat_page.restore_last() is None:
+            QMessageBox.information(self, "提示", "还没有可恢复的历史对话")
+            return
         self.switch_page(self.PAGE_CREATE)
-        self.img2img_tab.set_reference(Path(path))
-        self.img2img_tab.status.setText("已设为参考图，输入编辑指令继续生成")
-        self.tabs.setCurrentWidget(self.img2img_tab)
-        self.img2img_tab.prompt_edit.setFocus()
 
     # ------------------------------------------------------------------
     # 窗口状态

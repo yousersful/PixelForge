@@ -189,6 +189,21 @@ QFrame[class="card"] {{
     border: 1px solid {t['outline']};
     border-radius: 14px;
 }}
+QFrame[class="card"][current="true"] {{
+    border: 2px solid {t['accent']};
+}}
+/* 对话气泡 */
+QWidget[class="bubble-user-inner"] {{
+    background-color: {t['accent_soft']};
+    border-radius: 16px;
+}}
+QLabel[class="bubble-error"] {{
+    background-color: {t['surface']};
+    color: {t['danger']};
+    border: 1px solid {t['danger']};
+    border-radius: 12px;
+    padding: 10px 14px;
+}}
 QLabel[class="pageTitle"] {{
     font-size: 24px;
     font-weight: 700;
