@@ -15,15 +15,17 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from PyQt5.QtCore import QThread, Qt, pyqtSignal
+from PyQt5.QtCore import QPoint, QThread, Qt, pyqtSignal
 from PyQt5.QtGui import QKeySequence, QPixmap
 from PyQt5.QtWidgets import (
-    QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
-    QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QShortcut,
-    QSpinBox, QStackedWidget, QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QMenu, QMessageBox, QPlainTextEdit,
+    QPushButton, QScrollArea, QShortcut, QSpinBox, QStackedWidget,
+    QVBoxLayout, QWidget,
 )
 
-from pixelforge.models.gen_modes import GENERATION_MODES
+from pixelforge.models.gen_modes import GENERATION_MODES, get_mode
+from pixelforge.models.prompts import TEMPLATES
 from pixelforge.utils.helpers import load_pixmap, save_image_dialog
 
 CARD_IMG = 260  # 结果卡片图片显示尺寸（px）
@@ -39,7 +41,7 @@ class _ChatWorker(QThread):
     finished_err = pyqtSignal(str)
 
     def __init__(self, service, prompt, model, size, num, mode,
-                 ref_path=None) -> None:
+                 ref_path=None, custom_params: dict | None = None) -> None:
         super().__init__()
         self.service = service
         self.prompt = prompt
@@ -48,6 +50,7 @@ class _ChatWorker(QThread):
         self.num = num
         self.mode = mode
         self.ref_path = ref_path
+        self.custom_params = custom_params or {}
 
     def run(self) -> None:
         started = time.monotonic()
@@ -55,11 +58,12 @@ class _ChatWorker(QThread):
             if self.ref_path:
                 paths = self.service.image_to_image(
                     self.prompt, self.model, self.ref_path, self.size,
-                    self.num, mode=self.mode,
+                    self.num, mode=self.mode, **self.custom_params,
                 )
             else:
                 paths = self.service.generate(
-                    self.prompt, self.model, self.size, self.num, mode=self.mode,
+                    self.prompt, self.model, self.size, self.num,
+                    mode=self.mode, **self.custom_params,
                 )
             self.finished_ok.emit(paths, time.monotonic() - started)
         except Exception as exc:  # noqa: BLE001
@@ -220,6 +224,78 @@ class _ResultCard(QFrame):
 # ----------------------------------------------------------------------
 # 创作页
 # ----------------------------------------------------------------------
+
+class _AdvancedPanel(QFrame):
+    """高级选项浮层：尺寸/张数 + 自定义参数开关。
+
+    开关启用时用户参数覆盖生成模式预设（与内核「显式参数优先」一致）；
+    关闭时完全跟随模式预设。
+    """
+
+    def __init__(self, chat: "ChatPage", parent=None) -> None:
+        super().__init__(parent or chat)
+        self.setProperty("class", "card")
+        self.setFixedWidth(340)
+        col = QVBoxLayout(self)
+        col.setContentsMargins(16, 12, 16, 12)
+        col.setSpacing(10)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("尺寸"))
+        self.size_combo = QComboBox()
+        row.addWidget(self.size_combo, 1)
+        row.addWidget(QLabel("张数"))
+        self.num_spin = QSpinBox()
+        self.num_spin.setRange(1, 9)
+        row.addWidget(self.num_spin)
+        col.addLayout(row)
+
+        self.custom_check = QCheckBox("启用自定义参数（覆盖生成模式预设）")
+        self.custom_check.toggled.connect(self._toggle_custom)
+        col.addWidget(self.custom_check)
+
+        form = QFormLayout()
+        form.setSpacing(6)
+        self.guidance_spin = QDoubleSpinBox()
+        self.guidance_spin.setRange(1.0, 20.0)
+        self.guidance_spin.setSingleStep(0.5)
+        self.steps_spin = QSpinBox()
+        self.steps_spin.setRange(1, 100)
+        form.addRow("引导值:", self.guidance_spin)
+        form.addRow("步数:", self.steps_spin)
+        col.addLayout(form)
+
+        self.preset_hint = QLabel("")
+        self.preset_hint.setProperty("class", "hint")
+        self.preset_hint.setWordWrap(True)
+        col.addWidget(self.preset_hint)
+        self._toggle_custom(False)
+
+    def hideEvent(self, ev) -> None:  # noqa: N802
+        # Popup 关闭的所有路径（点击外部/Esc/再次点齿轮）统一收口：
+        # 同步齿轮按钮状态并持久化设置
+        chat = self.parent()
+        if chat is not None and hasattr(chat, "adv_btn"):
+            chat.adv_btn.setChecked(False)
+            chat._persist_adv_settings()
+        super().hideEvent(ev)
+
+    def _toggle_custom(self, on: bool) -> None:
+        self.guidance_spin.setEnabled(on)
+        self.steps_spin.setEnabled(on)
+
+    def update_preset_hint(self, mode_id: str) -> None:
+        """显示当前模式预设，让用户知道关闭自定义时会发生什么。"""
+        m = get_mode(mode_id)
+        if m.num_inference_steps is None:
+            self.preset_hint.setText("当前模式「标准」使用厂商默认参数")
+        else:
+            self.preset_hint.setText(
+                f"当前模式「{m.name}」预设：步数 {m.num_inference_steps}，"
+                f"引导值 {m.guidance_scale}（关闭自定义时生效）"
+            )
+
+
 class ChatPage(QWidget):
     """对话式创作页。"""
 
@@ -283,27 +359,32 @@ class ChatPage(QWidget):
         self.ref_btn.toggled.connect(self._toggle_ref)
         tools.addWidget(self.ref_btn)
 
+        self.tpl_btn = QPushButton("◇ 选择模板")
+        self.tpl_btn.setToolTip("从内置提示词模板中选择，填入输入框")
+        self.tpl_btn.clicked.connect(self._show_template_menu)
+        tools.addWidget(self.tpl_btn)
+
         self.model_combo = QComboBox()
-        self.model_combo.setMinimumWidth(170)
+        self.model_combo.setMinimumWidth(150)
         self.model_combo.currentIndexChanged.connect(self._on_model_changed)
         tools.addWidget(QLabel("模型"))
         tools.addWidget(self.model_combo, 1)
-
-        tools.addWidget(QLabel("尺寸"))
-        self.size_combo = QComboBox()
-        tools.addWidget(self.size_combo)
-
-        tools.addWidget(QLabel("张数"))
-        self.num_spin = QSpinBox()
-        self.num_spin.setRange(1, 4)
-        tools.addWidget(self.num_spin)
 
         tools.addWidget(QLabel("模式"))
         self.mode_combo = QComboBox()
         for m in GENERATION_MODES:
             self.mode_combo.addItem(f"{m.name} - {m.description.split('，')[0]}", m.id)
         self.mode_combo.setCurrentIndex(1)  # 标准
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         tools.addWidget(self.mode_combo)
+
+        # 高级选项（尺寸/张数/自定义参数收进齿轮面板）
+        self.adv_btn = QPushButton("⚙")
+        self.adv_btn.setToolTip("高级选项：尺寸、张数、自定义参数")
+        self.adv_btn.setCheckable(True)
+        self.adv_btn.setCursor(Qt.PointingHandCursor)
+        self.adv_btn.clicked.connect(self._toggle_adv_panel)
+        tools.addWidget(self.adv_btn)
 
         self.send_btn = QPushButton("生成  ➤")
         self.send_btn.setProperty("class", "primary")
@@ -313,6 +394,14 @@ class ChatPage(QWidget):
 
         icol.addLayout(tools)
         col.addWidget(input_card)
+
+        # 高级选项弹出面板：原生 Popup 窗口（点击外部自动收起，
+        # 内部控件正常交互，无需自制"点击外部"判断）
+        self.adv_panel = _AdvancedPanel(self)
+        self.adv_panel.setWindowFlags(Qt.Popup)
+        self.adv_panel.hide()
+
+        self._restore_adv_settings()
 
         QShortcut(QKeySequence("Ctrl+Up"), self, self._scroll_to_top)
 
@@ -482,6 +571,15 @@ class ChatPage(QWidget):
                 self.model_combo.setCurrentIndex(idx)
         self._on_model_changed()
 
+    # 尺寸/张数控件移入高级面板，属性代理保持外部引用不变
+    @property
+    def size_combo(self) -> QComboBox:
+        return self.adv_panel.size_combo
+
+    @property
+    def num_spin(self) -> QSpinBox:
+        return self.adv_panel.num_spin
+
     def _current_model_id(self) -> str:
         return self.model_combo.currentData() or ""
 
@@ -529,6 +627,72 @@ class ChatPage(QWidget):
             self.ref_btn.setText("+ 参考图")
 
     # ------------------------------------------------------------------
+    # 高级选项面板 / 模板菜单
+    # ------------------------------------------------------------------
+    def _toggle_adv_panel(self) -> None:
+        """齿轮按钮：在齿轮上方弹出高级选项面板。"""
+        if not self.adv_btn.isChecked():
+            return  # 面板已由 Popup 机制关闭（hideEvent 已同步状态）
+        self.adv_panel.update_preset_hint(self.mode_combo.currentData())
+        self.adv_panel.adjustSize()
+        origin = self.adv_btn.mapToGlobal(QPoint(0, 0))
+        x = origin.x() + self.adv_btn.width() - self.adv_panel.width()
+        y = origin.y() - self.adv_panel.height() - 8
+        self.adv_panel.move(x, y)
+        self.adv_panel.show()
+        self.adv_panel.raise_()
+
+    def _on_mode_changed(self) -> None:
+        """模式切换时刷新面板里的预设提示。"""
+        if hasattr(self, "adv_panel"):
+            self.adv_panel.update_preset_hint(self.mode_combo.currentData())
+
+    def _show_template_menu(self) -> None:
+        """「选择模板」：弹出全部内置模板，点击填入输入框。"""
+        import re
+
+        menu = QMenu(self)
+        for t in TEMPLATES:
+            text = re.sub(r"\{[^}]*\}", t.placeholder or "", t.text)
+            menu.addAction(
+                f"[{t.category}] {t.name}",
+                lambda text=text: self._use_template(text),
+            )
+        menu.exec_(self.tpl_btn.mapToGlobal(QPoint(0, self.tpl_btn.height())))
+
+    def _custom_params(self) -> dict:
+        """自定义参数（开关启用时生效，与内核显式参数优先规则一致）。"""
+        p = self.adv_panel
+        if not p.custom_check.isChecked():
+            return {}
+        return {
+            "guidance_scale": p.guidance_spin.value(),
+            "num_inference_steps": int(p.steps_spin.value()),
+        }
+
+    def _persist_adv_settings(self) -> None:
+        p = self.adv_panel
+        self.config.set("chat.adv_custom", p.custom_check.isChecked())
+        self.config.set("chat.adv_guidance", p.guidance_spin.value())
+        self.config.set("chat.adv_steps", p.steps_spin.value())
+        self.config.set("chat.adv_num", p.num_spin.value())
+        self.config.save()
+
+    def _restore_adv_settings(self) -> None:
+        c = self.config
+        p = self.adv_panel
+        p.custom_check.setChecked(bool(c.get("chat.adv_custom", False)))
+        guidance = c.get("chat.adv_guidance")
+        if guidance:
+            p.guidance_spin.setValue(float(guidance))
+        steps = c.get("chat.adv_steps")
+        if steps:
+            p.steps_spin.setValue(int(steps))
+        num = c.get("chat.adv_num")
+        if num:
+            p.num_spin.setValue(int(num))
+
+    # ------------------------------------------------------------------
     # 发送与结果
     # ------------------------------------------------------------------
     def _send(self) -> None:
@@ -567,9 +731,11 @@ class ChatPage(QWidget):
 
         self._worker = _ChatWorker(
             self.service, text, model,
-            self.size_combo.currentText(), self.num_spin.value(),
+            self.adv_panel.size_combo.currentText(), self.adv_panel.num_spin.value(),
             self.mode_combo.currentData(), ref_path=ref,
+            custom_params=self._custom_params(),
         )
+        self._persist_adv_settings()
         self._worker.finished_ok.connect(self._on_ok)
         self._worker.finished_err.connect(self._on_err)
         self.send_btn.setEnabled(False)
