@@ -154,6 +154,37 @@ QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus,
 QSpinBox:focus, QDoubleSpinBox:focus {{
     border: 1.5px solid {t['accent']};
 }}
+/* 数字框的上下按钮（否则漏出 Windows 原生样式） */
+QSpinBox::up-button, QDoubleSpinBox::up-button,
+QSpinBox::down-button, QDoubleSpinBox::down-button {{
+    background: transparent;
+    border: none;
+    width: 20px;
+    padding: 2px;
+}}
+QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{
+    background: {t['surface2']};
+    border-radius: 4px;
+}}
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
+    width: 8px; height: 8px;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-bottom: 5px solid {t['text_sub']};
+}}
+QSpinBox::up-arrow:hover, QDoubleSpinBox::up-arrow:hover {{
+    border-bottom-color: {t['accent']};
+}}
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow {{
+    width: 8px; height: 8px;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid {t['text_sub']};
+}}
+QSpinBox::down-arrow:hover, QDoubleSpinBox::down-arrow:hover {{
+    border-top-color: {t['accent']};
+}}
 QComboBox {{
     background-color: {t['surface']};
     border: 1px solid {t['outline']};
