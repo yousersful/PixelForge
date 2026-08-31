@@ -16,11 +16,11 @@ from datetime import datetime
 from pathlib import Path
 
 from PyQt5.QtCore import QThread, Qt, pyqtSignal
-from PyQt5.QtGui import QKeySequence
+from PyQt5.QtGui import QKeySequence, QPixmap
 from PyQt5.QtWidgets import (
-    QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
-    QPlainTextEdit, QPushButton, QScrollArea, QShortcut, QSpinBox,
-    QVBoxLayout, QWidget,
+    QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
+    QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QShortcut,
+    QSpinBox, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from pixelforge.models.gen_modes import GENERATION_MODES
@@ -247,7 +247,12 @@ class ChatPage(QWidget):
         self.flow.setSpacing(14)
         self.flow.addStretch(1)
         self.scroll.setWidget(self.flow_holder)
-        col.addWidget(self.scroll, 1)
+
+        # ---- 欢迎 / 消息流 双页切换：空会话显示欢迎页 ----
+        self.body_stack = QStackedWidget()
+        self.body_stack.addWidget(self._build_welcome())
+        self.body_stack.addWidget(self.scroll)
+        col.addWidget(self.body_stack, 1)
 
         self.hint_label = QLabel(
             "输入描述开始创作；生成后想修改，直接说出修改意见即可"
@@ -312,6 +317,90 @@ class ChatPage(QWidget):
         QShortcut(QKeySequence("Ctrl+Up"), self, self._scroll_to_top)
 
         self.refresh_models()
+        self._update_welcome()
+
+    # ------------------------------------------------------------------
+    # 欢迎页（空会话状态）
+    # ------------------------------------------------------------------
+    def _build_welcome(self) -> QWidget:
+        """欢迎页：logo + 标语 + 提示词模板建议卡。"""
+        page = QWidget()
+        outer = QVBoxLayout(page)
+        outer.addStretch(1)
+
+        center = QVBoxLayout()
+        center.setSpacing(14)
+        center.setAlignment(Qt.AlignHCenter)
+
+        # 标题行：欢迎使用 + logo 图片
+        title_row = QHBoxLayout()
+        title_row.setAlignment(Qt.AlignHCenter)
+        title_row.setSpacing(14)
+        t = QLabel("欢迎使用")
+        t.setStyleSheet("font-size: 34px; font-weight: 800;")
+        title_row.addWidget(t)
+
+        logo = QLabel()
+        logo_path = Path(__file__).resolve().parents[2] / "Logo_with_Font.png"
+        pm = load_pixmap(str(logo_path), 220) if logo_path.exists() else QPixmap()
+        if not pm.isNull():
+            logo.setPixmap(pm)
+            logo.setScaledContents(True)
+            logo.setFixedHeight(56)
+            logo.setFixedWidth(int(pm.width() * 56 / pm.height()))
+        else:  # 图片缺失时退回文字
+            logo.setText("PixelForge")
+            logo.setStyleSheet("font-size: 34px; font-weight: 800; font-style: italic;")
+        title_row.addWidget(logo)
+        center.addLayout(title_row)
+
+        sub = QLabel("今天有什么天马行空的想法？")
+        sub.setProperty("class", "pageCaption")
+        sub.setAlignment(Qt.AlignCenter)
+        center.addWidget(sub)
+        center.addSpacing(10)
+
+        tip = QLabel("暂时没有想法？试试这些：")
+        tip.setProperty("class", "hint")
+        tip.setAlignment(Qt.AlignCenter)
+        center.addWidget(tip)
+
+        # 模板建议卡（取自内置提示词模板，占位符用默认值填充）
+        from pixelforge.models.prompts import TEMPLATES
+
+        import re
+
+        def filled(tpl) -> str:
+            return re.sub(r"\{[^}]*\}", tpl.placeholder or "", tpl.text)
+
+        picks = [TEMPLATES[i] for i in (0, 6, 2, 7) if i < len(TEMPLATES)]
+        grid = QGridLayout()
+        grid.setSpacing(10)
+        for i, tpl in enumerate(picks):
+            btn = QPushButton(filled(tpl))
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip(f"模板：{tpl.name}（{tpl.category}）\n点击填入输入框")
+            btn.clicked.connect(
+                lambda _=False, text=filled(tpl): self._use_template(text)
+            )
+            grid.addWidget(btn, i // 2, i % 2)
+        holder = QWidget()
+        holder.setLayout(grid)
+        center.addWidget(holder, 0, Qt.AlignHCenter)
+
+        outer.addLayout(center)
+        outer.addStretch(2)
+        return page
+
+    def _use_template(self, text: str) -> None:
+        """点模板卡：填入输入框并聚焦。"""
+        self.prompt_edit.setPlainText(text)
+        self.prompt_edit.setFocus()
+
+    def _update_welcome(self) -> None:
+        """会话为空时显示欢迎页，有内容时显示消息流。"""
+        empty = not self.session.get("messages")
+        self.body_stack.setCurrentIndex(0 if empty else 1)
 
     # ------------------------------------------------------------------
     # 会话
@@ -327,6 +416,7 @@ class ChatPage(QWidget):
         )
         self._clear_flow()
         self.hint_label.setText("已开启新的创作，上一段对话已保存")
+        self._update_welcome()
 
     def restore_last(self) -> dict | None:
         """「恢复上次对话」。返回会话数据；没有可恢复的会话时 None。"""
@@ -337,6 +427,7 @@ class ChatPage(QWidget):
             self.sessions.save(self.session)
         self.session = data
         self._rebuild_from_session()
+        self._update_welcome()
         return data
 
     def _rebuild_from_session(self) -> None:
@@ -461,6 +552,7 @@ class ChatPage(QWidget):
             self.prompt_edit.toPlainText().strip() or "(参考图)",
             ref,
         ))
+        self._update_welcome()
 
         self.prompt_edit.clear()
         self._pending_ref = None
