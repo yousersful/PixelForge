@@ -48,7 +48,7 @@ class SessionStore:
         mode: str = "standard",
     ) -> dict:
         """构造一个空会话对象（不落盘）。"""
-        now = datetime.now().isoformat(timespec="seconds")
+        now = datetime.now().isoformat(timespec="milliseconds")
         return {
             "id": f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}",
             "created_at": now,
@@ -69,7 +69,7 @@ class SessionStore:
     def save(self, session: dict) -> Path:
         """保存（或覆盖）一个会话，返回文件路径。自动刷新 updated_at。"""
         self._ensure_dir()
-        session["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        session["updated_at"] = datetime.now().isoformat(timespec="milliseconds")
         path = self._path(session["id"])
         path.write_text(
             json.dumps(session, ensure_ascii=False, indent=2),
@@ -99,7 +99,10 @@ class SessionStore:
     # 列表 / 删除
     # ------------------------------------------------------------------
     def list_sessions(self, limit: int = 50) -> List[dict]:
-        """按更新时间倒序列出会话摘要（不含 messages，避免大对象）。"""
+        """按更新时间倒序列出会话摘要（不含 messages，避免大对象）。
+
+        thumb 为会话中第一张生成图路径（无则空串），供侧栏缩略图使用。
+        """
         if not self.dir.exists():
             return []
         items: List[dict] = []
@@ -107,12 +110,20 @@ class SessionStore:
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
                 msgs = data.get("messages") or []
+                thumb = ""
+                for m in msgs:
+                    if m.get("role") == "assistant" and m.get("type") == "images":
+                        paths = m.get("paths") or []
+                        if paths:
+                            thumb = paths[0]
+                            break
                 items.append(
                     {
                         "id": data.get("id", p.stem),
                         "updated_at": data.get("updated_at", ""),
                         "model": data.get("model", ""),
                         "message_count": len(msgs),
+                        "thumb": thumb,
                         # 首条用户文字消息，作为列表预览
                         "preview": next(
                             (

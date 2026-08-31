@@ -420,7 +420,14 @@ class ChatPage(QWidget):
 
     def restore_last(self) -> dict | None:
         """「恢复上次对话」。返回会话数据；没有可恢复的会话时 None。"""
-        data = self.sessions.latest()
+        latest = self.sessions.list_sessions(limit=1)
+        if not latest:
+            return None
+        return self.restore_session(latest[0]["id"])
+
+    def restore_session(self, session_id: str) -> dict | None:
+        """按 ID 恢复任意会话（侧栏「最近的对话」点击）。"""
+        data = self.sessions.load(session_id)
         if not data:
             return None
         if self.session["messages"]:

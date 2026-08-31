@@ -8,10 +8,14 @@
 """
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt
+from pathlib import Path
+
+from PyQt5.QtCore import QSize, Qt
+from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (
-    QButtonGroup, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
-    QPushButton, QStackedWidget, QVBoxLayout, QWidget,
+    QButtonGroup, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QMainWindow, QMessageBox, QPushButton, QStackedWidget, QVBoxLayout,
+    QWidget,
 )
 
 from pixelforge.core.image_service import ImageService
@@ -23,6 +27,29 @@ from pixelforge.ui.chat_tab import ChatPage
 from pixelforge.ui.favorites_panel import FavoritesPanel
 from pixelforge.ui.history_panel import HistoryPanel
 from pixelforge.ui.settings_page import SettingsPage
+
+
+def _relative_time(iso: str) -> str:
+    """把 updated_at 转成「x分钟前 / x小时前 / 昨天 / x天前 / 日期」。"""
+    from datetime import datetime
+
+    try:
+        t = datetime.fromisoformat(iso)
+    except (ValueError, TypeError):
+        return iso
+    delta = datetime.now() - t
+    seconds = delta.total_seconds()
+    if seconds < 60:
+        return "刚刚"
+    if seconds < 3600:
+        return f"{int(seconds // 60)}分钟前"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)}小时前"
+    if seconds < 172800:
+        return "昨天"
+    if seconds < 86400 * 30:
+        return f"{int(seconds // 86400)}天前"
+    return t.strftime("%Y-%m-%d")
 
 
 class MainWindow(QMainWindow):
@@ -44,6 +71,7 @@ class MainWindow(QMainWindow):
 
         self._setup_ui()
         self._connect_signals()
+        self._refresh_session_list()
         self._restore_window_state()
 
     # ------------------------------------------------------------------
@@ -91,14 +119,21 @@ class MainWindow(QMainWindow):
             col.addWidget(btn)
             self.nav_buttons.append(btn)
 
-        # 恢复上次对话
-        self.btn_restore = QPushButton("↺  恢复上次对话")
-        self.btn_restore.setProperty("class", "nav")
-        self.btn_restore.setEnabled(bool(self.sessions.list_sessions(limit=1)))
-        self.btn_restore.clicked.connect(
-            lambda: self._restore_last_session()
-        )
-        col.addWidget(self.btn_restore)
+        # 最近的对话（会话列表，点击恢复）
+        self.session_label = QLabel("最近的对话")
+        self.session_label.setProperty("class", "hint")
+        self.session_label.setVisible(False)  # 无会话时隐藏
+        col.addWidget(self.session_label)
+
+        self.session_list = QListWidget(self)
+        self.session_list.setFrameShape(QFrame.NoFrame)
+        self.session_list.setIconSize(QSize(36, 36))
+        self.session_list.setMaximumHeight(240)
+        self.session_list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.session_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.session_list.setWordWrap(True)
+        self.session_list.itemClicked.connect(self._on_session_clicked)
+        col.addWidget(self.session_list)
 
         col.addStretch(1)
 
@@ -151,9 +186,12 @@ class MainWindow(QMainWindow):
         )
 
     def _start_new_session(self) -> None:
-        """「新的创作」：归档当前会话、切回创作页并聚焦输入框。"""
-        self.switch_page(self.PAGE_CREATE)
+        """「新的创作」：归档当前会话、切回创作页并聚焦输入框。
+
+        先归档再切页，保证侧栏「最近的对话」刷新时能看到本会话。
+        """
         self.chat_page.new_session()
+        self.switch_page(self.PAGE_CREATE)
         self.chat_page.prompt_edit.setFocus()
 
     # ------------------------------------------------------------------
@@ -164,7 +202,7 @@ class MainWindow(QMainWindow):
         widget = self.stack.widget(page)
         if hasattr(widget, "refresh"):
             widget.refresh()
-        self.btn_restore.setEnabled(bool(self.sessions.list_sessions(limit=1)))
+        self._refresh_session_list()
         self.stack.setCurrentIndex(page)
         # 侧栏选中态（收藏夹/历史两个 nav 按钮与页面对应）
         for i, btn in enumerate(self.nav_buttons):
@@ -176,10 +214,35 @@ class MainWindow(QMainWindow):
     def _on_settings_changed(self) -> None:
         self.chat_page.refresh_models()
 
-    def _restore_last_session(self) -> None:
-        """恢复上次对话并回到创作页。"""
-        if self.chat_page.restore_last() is None:
-            QMessageBox.information(self, "提示", "还没有可恢复的历史对话")
+    def _refresh_session_list(self) -> None:
+        """刷新侧栏「最近的对话」列表。"""
+        from pixelforge.utils.helpers import load_pixmap
+
+        self.session_list.clear()
+        items = self.sessions.list_sessions(limit=15)
+        self.session_label.setVisible(bool(items))
+        self.session_list.setVisible(bool(items))
+        for it in items:
+            label = f"{it['preview'] or '(无文字记录)'}\n{_relative_time(it['updated_at'])}"
+            icon = QIcon()
+            thumb = it.get("thumb", "")
+            if thumb and Path(thumb).exists():
+                pm = load_pixmap(thumb, 72)
+                if not pm.isNull():
+                    icon = QIcon(pm)
+            item = QListWidgetItem(icon, label)
+            item.setData(Qt.UserRole, it["id"])
+            item.setToolTip(
+                f"{it['model']}\n{it['message_count']} 条消息\n{it['updated_at']}"
+            )
+            self.session_list.addItem(item)
+
+    def _on_session_clicked(self, item) -> None:
+        """点击侧栏会话条目：恢复该会话并回到创作页。"""
+        session_id = item.data(Qt.UserRole)
+        if self.chat_page.restore_session(session_id) is None:
+            QMessageBox.warning(self, "恢复失败", "会话数据不存在或已损坏")
+            self._refresh_session_list()
             return
         self.switch_page(self.PAGE_CREATE)
 
