@@ -14,7 +14,7 @@ from PyQt5.QtCore import QSize, Qt
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (
     QButtonGroup, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QMainWindow, QMessageBox, QPushButton, QStackedWidget, QVBoxLayout,
+    QMainWindow, QMenu, QMessageBox, QPushButton, QStackedWidget, QVBoxLayout,
     QWidget,
 )
 
@@ -133,7 +133,12 @@ class MainWindow(QMainWindow):
         self.session_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.session_list.setWordWrap(True)
         self.session_list.itemClicked.connect(self._on_session_clicked)
-        col.addWidget(self.session_list)
+        # 右键菜单：打开 / 删除会话
+        self.session_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.session_list.customContextMenuRequested.connect(
+            self._session_context_menu
+        )
+        col.addWidget(self.session_list) 
 
         col.addStretch(1)
 
@@ -245,6 +250,46 @@ class MainWindow(QMainWindow):
             self._refresh_session_list()
             return
         self.switch_page(self.PAGE_CREATE)
+
+    def _session_context_menu(self, pos) -> None:
+        """会话列表右键菜单：打开 / 删除。"""
+        item = self.session_list.itemAt(pos)
+        if item is None:
+            return
+        session_id = item.data(Qt.UserRole)
+        # 定位点击的是否当前正在编辑的会话（高亮预防误删正在进行的）
+        menu = QMenu(self)
+        act_open = menu.addAction("打开该会话")
+        menu.addSeparator()
+        act_del = menu.addAction("删除该会话")
+        chosen = menu.exec_(self.session_list.mapToGlobal(pos))
+        if chosen is act_open:
+            # 复用 itemClicked 的恢复逻辑
+            self._on_session_clicked(item)
+        elif chosen is act_del:
+            preview = item.text().split("\n")[0]
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Information)
+            box.setWindowTitle("删除对话")
+            box.setText("确定要删除这个对话吗？（已经生成的图片不会被删除）")
+            if preview and preview != "(无文字记录)":
+                box.setInformativeText(f"「{preview}」")
+            del_btn = box.addButton("确定", QMessageBox.AcceptRole)
+            box.addButton("取消", QMessageBox.RejectRole)
+            box.setDefaultButton(del_btn)
+            box.exec_()
+            if box.clickedButton() is del_btn:
+                # 若删除的正是当前编辑中的会话，重置为新的空白会话，
+                # 避免当前页还指向已被删除的内存会话
+                if self.chat_page.session.get("id") == session_id:
+                    self.chat_page.session = self.chat_page.sessions.new_session(
+                        provider=self.config.get("model.provider", ""),
+                    )
+                    self.chat_page._clear_flow()
+                    self.chat_page._update_welcome()
+                    self.chat_page.prompt_edit.clear()
+                self.sessions.delete(session_id)
+                self._refresh_session_list()
 
     # ------------------------------------------------------------------
     # 窗口状态
