@@ -386,6 +386,9 @@ class ChatPage(QWidget):
         self._worker: _ChatWorker | None = None
         self._cards: list[_ResultCard] = []
         self._placeholder: _PendingCard | None = None
+        # 归属绑定：进行中生成任务的发起会话 ID。
+        # 完成回调据此决定结果进当前界面还是写回发起会话的存档。
+        self._active_session_id: str | None = None
 
         col = QVBoxLayout(self)
         col.setContentsMargins(24, 20, 24, 20)
@@ -816,6 +819,7 @@ class ChatPage(QWidget):
             self.mode_combo.currentData(), ref_path=ref,
             custom_params=self._custom_params(),
         )
+        self._active_session_id = self.session["id"]
         self._persist_adv_settings()
         # 先插入骨架占位卡再启动线程：即使生成瞬间完成，信号也是排队投递，
         # 占位卡保证先出现在对话流里，完成回调再把它替换掉
@@ -845,39 +849,66 @@ class ChatPage(QWidget):
             self.flow.takeAt(idx)
         widget.deleteLater()
 
+    def _request_is_local(self) -> bool:
+        """发起生成的会话是否仍是当前会话（归属信息缺失时按本地兜底）。"""
+        return self._active_session_id is None \
+            or self.session.get("id") == self._active_session_id
+
+    def _write_back_to_origin(self, message: dict,
+                              current_image: str | None) -> None:
+        """用户已切走：把结果写回发起会话的存档，不碰当前界面。
+
+        发起会话若已被删除则跳过（图片仍在历史库中，不会丢失）。
+        """
+        origin, self._active_session_id = self._active_session_id, None
+        data = self.sessions.load(origin)
+        if not data:
+            return
+        data["messages"].append(message)
+        if current_image:
+            data["current_image"] = current_image
+        self.sessions.save(data)
+
     def _on_ok(self, paths: list, duration: float) -> None:
         self._remove_placeholder()
-        self._worker = None
+        worker, self._worker = self._worker, None
         self.send_btn.setEnabled(True)
         self.send_btn.setText("生成  ➤")
-        model = self._current_model_id()
+        model = worker.model if worker else self._current_model_id()
         durations = [round(duration, 1)] * len(paths)
-        for p in paths:
-            self._add_card(str(p), model, round(duration, 1))
-        self.session["messages"].append(
-            {
-                "role": "assistant", "type": "images",
-                "paths": [str(p) for p in paths], "durations": durations,
-                "model": model,
-            }
-        )
-        if paths:
-            self.session["current_image"] = str(paths[-1])
-        self._apply_current_image()
-        self.sessions.save(self.session)
-        self._scroll_to_bottom()
+        message = {
+            "role": "assistant", "type": "images",
+            "paths": [str(p) for p in paths], "durations": durations,
+            "model": model,
+        }
+        current = str(paths[-1]) if paths else None
+        if self._request_is_local():
+            self._active_session_id = None
+            for p in paths:
+                self._add_card(str(p), model, round(duration, 1))
+            self.session["messages"].append(message)
+            if current:
+                self.session["current_image"] = current
+            self._apply_current_image()
+            self.sessions.save(self.session)
+            self._scroll_to_bottom()
+        else:
+            self._write_back_to_origin(message, current)
 
     def _on_err(self, message: str) -> None:
         self._remove_placeholder()
         self._worker = None
         self.send_btn.setEnabled(True)
         self.send_btn.setText("生成  ➤")
-        self._add_bubble(_ErrorBubble(message))
-        self.session["messages"].append(
-            {"role": "assistant", "type": "error", "text": message}
-        )
-        self.sessions.save(self.session)
-        self._scroll_to_bottom()
+        msg = {"role": "assistant", "type": "error", "text": message}
+        if self._request_is_local():
+            self._active_session_id = None
+            self._add_bubble(_ErrorBubble(message))
+            self.session["messages"].append(msg)
+            self.sessions.save(self.session)
+            self._scroll_to_bottom()
+        else:
+            self._write_back_to_origin(msg, None)
 
     # ------------------------------------------------------------------
     # 流内容
