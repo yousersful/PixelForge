@@ -15,7 +15,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from PyQt5.QtCore import QPoint, QThread, Qt, pyqtSignal
+from PyQt5.QtCore import QPoint, QThread, QTimer, Qt, pyqtSignal
 from PyQt5.QtGui import QKeySequence, QPixmap
 from PyQt5.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
@@ -39,6 +39,7 @@ class _ChatWorker(QThread):
 
     finished_ok = pyqtSignal(list, float)  # 保存路径列表, 用时（秒）
     finished_err = pyqtSignal(str)
+    progress = pyqtSignal(int, int)  # 批序号, 总批数（>1 时提示用）
 
     def __init__(self, service, prompt, model, size, num, mode,
                  ref_path=None, custom_params: dict | None = None) -> None:
@@ -55,15 +56,21 @@ class _ChatWorker(QThread):
     def run(self) -> None:
         started = time.monotonic()
         try:
+
+            def _report(batch_no: int, total: int) -> None:
+                self.progress.emit(batch_no, total)
+
             if self.ref_path:
                 paths = self.service.image_to_image(
                     self.prompt, self.model, self.ref_path, self.size,
-                    self.num, mode=self.mode, **self.custom_params,
+                    self.num, mode=self.mode, progress_cb=_report,
+                    **self.custom_params,
                 )
             else:
                 paths = self.service.generate(
                     self.prompt, self.model, self.size, self.num,
-                    mode=self.mode, **self.custom_params,
+                    mode=self.mode, progress_cb=_report,
+                    **self.custom_params,
                 )
             self.finished_ok.emit(paths, time.monotonic() - started)
         except Exception as exc:  # noqa: BLE001
@@ -221,6 +228,76 @@ class _ResultCard(QFrame):
         self.style().polish(self)
 
 
+_SPIN_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
+class _PendingCard(QFrame):
+    """生成进行中的骨架占位卡。
+
+    结构复刻结果卡（图区 260×260），图区内显示旋转指示 + 状态文字；
+    完成/失败后整卡被移除，替换为真实结果卡或错误气泡。
+    """
+
+    def __init__(self, model: str, num: int, parent=None) -> None:
+        super().__init__(parent)
+        self.setProperty("class", "card")
+        col = QVBoxLayout(self)
+        col.setContentsMargins(14, 10, 14, 12)
+        col.setSpacing(8)
+
+        meta = QLabel(f"生成中 · {model}" if model else "生成中")
+        meta.setProperty("class", "hint")
+        col.addWidget(meta)
+
+        area = QFrame()
+        area.setProperty("class", "pending-area")
+        area.setFixedSize(CARD_IMG, CARD_IMG)
+        box = QVBoxLayout(area)
+        box.addStretch(1)
+        self.spin = QLabel("")
+        self.spin.setProperty("class", "pending-spin")
+        self.spin.setAlignment(Qt.AlignCenter)
+        box.addWidget(self.spin)
+        self.status = QLabel("")
+        self.status.setProperty("class", "pending-text")
+        self.status.setAlignment(Qt.AlignCenter)
+        self.status.setWordWrap(True)
+        self.status.setMaximumWidth(CARD_IMG - 24)
+        box.addWidget(self.status)
+        box.addStretch(1)
+        col.addWidget(area, 0, Qt.AlignLeft)
+
+        self._frame = 0
+        self._timer = QTimer(self)
+        self._timer.setInterval(110)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start()
+        self._tick()
+
+        self.set_status(num)
+
+    # ---- 状态文字 ----
+    def set_status(self, num: int) -> None:
+        if num > 1:
+            self.status.setText(f"正在生成 {num} 张图片，请稍候…")
+        else:
+            self.status.setText("正在生成图片，请稍候…")
+
+    def set_batch(self, batch: int, total: int) -> None:
+        """分批生成（厂商单次只回一张）时给出第几批提示。"""
+        if total > 1:
+            self.status.setText(f"正在生成第 {batch}/{total} 批…")
+
+    # ---- 动画 ----
+    def _tick(self) -> None:
+        self._frame = (self._frame + 1) % len(_SPIN_FRAMES)
+        self.spin.setText(_SPIN_FRAMES[self._frame])
+
+    def stop(self) -> None:
+        """移除前停止动画定时器。"""
+        self._timer.stop()
+
+
 # ----------------------------------------------------------------------
 # 创作页
 # ----------------------------------------------------------------------
@@ -308,6 +385,7 @@ class ChatPage(QWidget):
         self._pending_ref: str | None = None  # 本轮用户主动上传的参考图
         self._worker: _ChatWorker | None = None
         self._cards: list[_ResultCard] = []
+        self._placeholder: _PendingCard | None = None
 
         col = QVBoxLayout(self)
         col.setContentsMargins(24, 20, 24, 20)
@@ -543,10 +621,13 @@ class ChatPage(QWidget):
         self._apply_current_image()
 
     def _clear_flow(self) -> None:
+        self._placeholder = None  # 生成中切换会话：占位卡随之销毁，回调不再更新它
         while self.flow.count() > 1:  # 保留末尾 stretch
             item = self.flow.takeAt(0)
             w = item.widget()
             if w:
+                if isinstance(w, _PendingCard):
+                    w.stop()
                 w.deleteLater()
         self._cards.clear()
 
@@ -736,13 +817,36 @@ class ChatPage(QWidget):
             custom_params=self._custom_params(),
         )
         self._persist_adv_settings()
+        # 先插入骨架占位卡再启动线程：即使生成瞬间完成，信号也是排队投递，
+        # 占位卡保证先出现在对话流里，完成回调再把它替换掉
+        self._placeholder = _PendingCard(model, self.adv_panel.num_spin.value())
+        self.flow.insertWidget(self.flow.count() - 1, self._placeholder)
+        self._worker.progress.connect(self._on_progress)
         self._worker.finished_ok.connect(self._on_ok)
         self._worker.finished_err.connect(self._on_err)
         self.send_btn.setEnabled(False)
         self.send_btn.setText("生成中…")
         self._worker.start()
+        self._scroll_to_bottom()
+
+    def _on_progress(self, batch: int, total: int) -> None:
+        if self._placeholder is not None:
+            self._placeholder.set_batch(batch, total)
+
+    def _remove_placeholder(self) -> None:
+        """移除骨架占位卡（完成/失败/清空消息流时调用）。"""
+        if self._placeholder is None:
+            return
+        self._placeholder.stop()
+        widget = self._placeholder
+        self._placeholder = None
+        idx = self.flow.indexOf(widget)
+        if idx >= 0:
+            self.flow.takeAt(idx)
+        widget.deleteLater()
 
     def _on_ok(self, paths: list, duration: float) -> None:
+        self._remove_placeholder()
         self._worker = None
         self.send_btn.setEnabled(True)
         self.send_btn.setText("生成  ➤")
@@ -764,6 +868,7 @@ class ChatPage(QWidget):
         self._scroll_to_bottom()
 
     def _on_err(self, message: str) -> None:
+        self._remove_placeholder()
         self._worker = None
         self.send_btn.setEnabled(True)
         self.send_btn.setText("生成  ➤")

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from pixelforge.core.api_client import get_client
 from pixelforge.core.storage import HistoryRecord, HistoryStore
@@ -141,17 +141,23 @@ class ImageService:
         num_inference_steps: int | None = None,
         cfg_scale: float | None = None,
         mode: str | None = None,
+        progress_cb: Callable[[int, int], None] | None = None,
     ) -> List[Path]:
         """生成图片并保存到本地，返回保存路径列表。
 
         同时写入历史记录（含用时）。若未配置 Key 则抛出异常。
         mode 为生成模式 ID（快速/标准/创造），其预设参数与显式传入的
         高级参数合并（显式值优先）。
+        progress_cb(已开始批序号, 总批数) 在每批调用前触发，用于 UI 进度提示；
+        单批请求（多数场景）也会触发一次 (1, 1)。
         """
         client = self._client()
         presets = mode_kwargs(mode)
         saved: List[Path] = []
-        for batch_n in self._split_batches(client, num_images):
+        batches = self._split_batches(client, num_images)
+        for batch_no, batch_n in enumerate(batches, start=1):
+            if progress_cb:
+                progress_cb(batch_no, len(batches))
             started = time.monotonic()
             result = client.generate(
                 prompt, model_id, size, batch_n,
@@ -195,13 +201,20 @@ class ImageService:
         num_inference_steps: int | None = None,
         cfg_scale: float | None = None,
         mode: str | None = None,
+        progress_cb: Callable[[int, int], None] | None = None,
     ) -> List[Path]:
-        """图生图：以参考图 + 文本指令生成图片，返回保存路径列表。"""
+        """图生图：以参考图 + 文本指令生成图片，返回保存路径列表。
+
+        progress_cb 语义同 generate()。
+        """
         client = self._client()
         image_data = self._to_data_url(ref_image_path)
         presets = mode_kwargs(mode)
         saved: List[Path] = []
-        for batch_n in self._split_batches(client, num_images):
+        batches = self._split_batches(client, num_images)
+        for batch_no, batch_n in enumerate(batches, start=1):
+            if progress_cb:
+                progress_cb(batch_no, len(batches))
             started = time.monotonic()
             result = client.generate(
                 prompt, model_id, size, batch_n,

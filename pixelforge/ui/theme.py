@@ -235,6 +235,22 @@ QLabel[class="bubble-error"] {{
     border-radius: 12px;
     padding: 10px 14px;
 }}
+/* 生成中的骨架占位卡（PendingCard） */
+QFrame[class="pending-area"] {{
+    background-color: {t['surface2']};
+    border: 1.5px dashed {t['outline']};
+    border-radius: 10px;
+}}
+QLabel[class="pending-spin"] {{
+    font-size: 22px;
+    color: {t['accent']};
+    background: transparent;
+}}
+QLabel[class="pending-text"] {{
+    font-size: 13px;
+    color: {t['text_sub']};
+    background: transparent;
+}}
 QLabel[class="pageTitle"] {{
     font-size: 24px;
     font-weight: 700;
