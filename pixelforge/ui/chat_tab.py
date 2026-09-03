@@ -140,62 +140,83 @@ class _ErrorBubble(QLabel):
         self.setProperty("class", "bubble-error")
 
 
-class _ResultCard(QFrame):
-    """一张生成结果卡片：元信息 + 图片 + 操作（收藏/下载/打开文件夹）。
+class _ResultCard(QWidget):
+    """一轮结果中的一个缩略格：图片（点击设为当前图）+ 操作行。
 
-    点击图片把它设为「当前图」。
+    无边框（由外层 _ResultGroup 提供卡片外观）；操作行
+    （收藏/下载/打开文件夹）仅在本格是「当前图」时可见。
     """
 
     selected = pyqtSignal(str)  # 图片路径
 
     def __init__(self, service, path: str, model: str, duration: float,
-                 parent=None) -> None:
+                 thumb: int = CARD_IMG, parent=None) -> None:
         super().__init__(parent)
         self.service = service
         self.path = path
-        self.setProperty("class", "card")
+        self.setProperty("class", "cell")
 
         col = QVBoxLayout(self)
-        col.setContentsMargins(14, 10, 14, 12)
-        col.setSpacing(8)
-
-        meta = QLabel(_meta_label(model, duration))
-        meta.setProperty("class", "hint")
-        col.addWidget(meta)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(4)
 
         self.image = _ClickableImage()
-        self.image.setPixmap(load_pixmap(path, CARD_IMG))
-        self.image.setFixedSize(CARD_IMG, CARD_IMG)
+        self.image.setPixmap(load_pixmap(path, thumb))
+        self.image.setFixedSize(thumb, thumb)
         self.image.setScaledContents(True)
+        self.image.setProperty("class", "cellimg")
         self.image.setCursor(Qt.PointingHandCursor)
         self.image.setToolTip("点击设为当前图（修改时会以它为参考）")
         self.image.clicked.connect(lambda: self.selected.emit(self.path))
         col.addWidget(self.image)
 
-        actions = QHBoxLayout()
-        actions.setSpacing(4)
+        # 操作条悬浮在图片底部（不参与网格布局，显示/隐藏不会挤动格子）
+        self._actions = QWidget(self.image)
+        self._actions.setAttribute(Qt.WA_StyledBackground, True)
+        self._actions.setStyleSheet(
+            "background-color: rgba(15, 23, 42, 0.72); border-radius: 8px;")
+        row = QHBoxLayout(self._actions)
+        row.setContentsMargins(8, 0, 8, 0)
+        row.setSpacing(2)
+        btn_css = (
+            "border: none; background: transparent; color: #FFFFFF;"
+            "padding: 2px 4px; font-size: 12px;"
+        )
         self.fav_btn = QPushButton("☆ 收藏")
-        self.fav_btn.setProperty("class", "ghost")
-        self.fav_btn.clicked.connect(self._toggle_favorite)
+        self.fav_btn.setToolTip("收藏到收藏夹（Like 目录）")
+        self.fav_btn.setCursor(Qt.PointingHandCursor)
         save_btn = QPushButton("下载")
-        save_btn.setProperty("class", "ghost")
-        save_btn.clicked.connect(self._save)
-        folder_btn = QPushButton("打开文件夹")
-        folder_btn.setProperty("class", "ghost")
-        folder_btn.clicked.connect(self._open_folder)
+        save_btn.setToolTip("把这张图另存到别处")
+        save_btn.setCursor(Qt.PointingHandCursor)
+        folder_btn = QPushButton("文件夹")
+        folder_btn.setToolTip("打开图片所在文件夹")
+        folder_btn.setCursor(Qt.PointingHandCursor)
         for b in (self.fav_btn, save_btn, folder_btn):
-            actions.addWidget(b)
-        actions.addStretch(1)
-        col.addLayout(actions)
+            b.setStyleSheet(btn_css)
+            row.addWidget(b)
+        self.fav_btn.clicked.connect(self._toggle_favorite)
+        save_btn.clicked.connect(self._save)
+        folder_btn.clicked.connect(self._open_folder)
+        self._actions.adjustSize()
+        self._layout_actions()
         self._refresh_fav()
 
     # ---- 操作 ----
+    def _layout_actions(self) -> None:
+        """操作条水平居中贴图片底部（悬浮层，不影响外部布局）。"""
+        bar = self._actions
+        bar.adjustSize()
+        t = self.image.width()
+        bar.move(max(4, (t - bar.width()) // 2), t - bar.height() - 6)
+        bar.raise_()
+
     def _refresh_fav(self) -> None:
         try:
             fav = self.service.is_favorited(self.path)
         except Exception:  # noqa: BLE001
             fav = False
         self.fav_btn.setText("★ 已收藏" if fav else "☆ 收藏")
+        self._layout_actions()
 
     def _toggle_favorite(self) -> None:
         try:
@@ -223,9 +244,55 @@ class _ResultCard(QFrame):
 
     # ---- 选中态 ----
     def set_selected(self, on: bool) -> None:
-        self.setProperty("current", "true" if on else "false")
-        self.style().unpolish(self)
-        self.style().polish(self)
+        """当前图高亮 + 操作行仅当前图可见。"""
+        self.image.setProperty("current", "true" if on else "false")
+        self.image.style().unpolish(self.image)
+        self.image.style().polish(self.image)
+        self._actions.setVisible(on)
+
+
+class _ResultGroup(QFrame):
+    """一轮生成的结果组：元信息 + 缩略图网格。
+
+    1 张 → 单列原尺寸；2–4 张 → 2 列；≥5 张 → 3 列。
+    一轮生成在对话流中只占一个消息块。
+    """
+
+    selected = pyqtSignal(str)  # 转发格子点击
+
+    def __init__(self, service, items: list, parent=None) -> None:
+        """items: [(path, model, duration), ...]"""
+        super().__init__(parent)
+        self.setProperty("class", "card")
+        self.cells: list[_ResultCard] = []
+
+        col = QVBoxLayout(self)
+        col.setContentsMargins(14, 10, 14, 12)
+        col.setSpacing(8)
+
+        n = len(items)
+        caption = _meta_label(items[0][1], items[0][2])
+        if n > 1:
+            caption += f"  ·  {n} 张"
+        meta = QLabel(caption)
+        meta.setProperty("class", "hint")
+        col.addWidget(meta)
+
+        thumb = CARD_IMG if n == 1 else (200 if n <= 4 else 180)
+        cols = 1 if n == 1 else (2 if n <= 4 else 3)
+        grid = QGridLayout()
+        grid.setSpacing(8)
+        for i, (path, model, duration) in enumerate(items):
+            cell = _ResultCard(service, path, model, duration, thumb=thumb)
+            cell.selected.connect(self.selected)
+            self.cells.append(cell)
+            grid.addWidget(cell, i // cols, i % cols, Qt.AlignLeft | Qt.AlignTop)
+        # 网格整体靠左：多余宽度留在右侧，不被均摊到各列
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addLayout(grid)
+        row.addStretch(1)
+        col.addLayout(row)
 
 
 _SPIN_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -617,8 +684,10 @@ class ChatPage(QWidget):
             elif role == "user" and mtype == "image":
                 self._add_bubble(_UserBubble("(参考图)", msg.get("path")))
             elif role == "assistant" and mtype == "images":
-                for p, dur in zip(msg.get("paths", []), msg.get("durations", [])):
-                    self._add_card(p, msg.get("model", ""), dur, record=False)
+                self._add_result_group(
+                    msg.get("paths", []), msg.get("model", ""),
+                    msg.get("durations", []),
+                )
             elif role == "assistant" and mtype == "error":
                 self._add_bubble(_ErrorBubble(msg.get("text", "")))
         self._apply_current_image()
@@ -884,8 +953,7 @@ class ChatPage(QWidget):
         current = str(paths[-1]) if paths else None
         if self._request_is_local():
             self._active_session_id = None
-            for p in paths:
-                self._add_card(str(p), model, round(duration, 1))
+            self._add_result_group([str(p) for p in paths], model, durations)
             self.session["messages"].append(message)
             if current:
                 self.session["current_image"] = current
@@ -917,14 +985,17 @@ class ChatPage(QWidget):
         self.flow.insertWidget(self.flow.count() - 1, widget)
         self._scroll_to_bottom()
 
-    def _add_card(self, path: str, model: str, duration: float,
-                  record: bool = True) -> _ResultCard:
-        card = _ResultCard(self.service, path, model, duration)
-        card.selected.connect(self._select_current)
-        self._cards.append(card)
-        self.flow.insertWidget(self.flow.count() - 1, card)
+    def _add_result_group(self, paths: list, model: str,
+                          durations: list) -> _ResultGroup:
+        """一轮生成的所有图放进一个消息块（缩略图网格）。"""
+        durs = list(durations) + [0.0] * (len(paths) - len(durations))
+        items = [(str(p), model, d) for p, d in zip(paths, durs)]
+        group = _ResultGroup(self.service, items)
+        group.selected.connect(self._select_current)
+        self._cards.extend(group.cells)
+        self.flow.insertWidget(self.flow.count() - 1, group)
         self._scroll_to_bottom()
-        return card
+        return group
 
     def _select_current(self, path: str) -> None:
         self.session["current_image"] = path

@@ -223,6 +223,15 @@ QFrame[class="card"] {{
 QFrame[class="card"][current="true"] {{
     border: 2px solid {t['accent']};
 }}
+/* 结果组网格中的缩略格：透明底 + 图片圆角/选中描边 */
+QWidget[class="cell"] {{ background: transparent; }}
+QLabel[class="cellimg"] {{
+    border: 2px solid transparent;
+    border-radius: 10px;
+}}
+QLabel[class="cellimg"][current="true"] {{
+    border: 2px solid {t['accent']};
+}}
 /* 对话气泡 */
 QWidget[class="bubble-user-inner"] {{
     background-color: {t['accent_soft']};
