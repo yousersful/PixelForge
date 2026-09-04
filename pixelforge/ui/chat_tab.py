@@ -148,6 +148,7 @@ class _ResultCard(QWidget):
     """
 
     selected = pyqtSignal(str)  # 图片路径
+    deleted = pyqtSignal(str)   # 请求删除这张图
 
     def __init__(self, service, path: str, model: str, duration: float,
                  thumb: int = CARD_IMG, parent=None) -> None:
@@ -191,12 +192,16 @@ class _ResultCard(QWidget):
         folder_btn = QPushButton("文件夹")
         folder_btn.setToolTip("打开图片所在文件夹")
         folder_btn.setCursor(Qt.PointingHandCursor)
-        for b in (self.fav_btn, save_btn, folder_btn):
+        del_btn = QPushButton("删除")
+        del_btn.setToolTip("删除这张图（移入回收站，并从对话与历史记录中移除）")
+        del_btn.setCursor(Qt.PointingHandCursor)
+        for b in (self.fav_btn, save_btn, folder_btn, del_btn):
             b.setStyleSheet(btn_css)
             row.addWidget(b)
         self.fav_btn.clicked.connect(self._toggle_favorite)
         save_btn.clicked.connect(self._save)
         folder_btn.clicked.connect(self._open_folder)
+        del_btn.clicked.connect(lambda: self.deleted.emit(self.path))
         self._actions.adjustSize()
         self._layout_actions()
         self._refresh_fav()
@@ -259,6 +264,7 @@ class _ResultGroup(QFrame):
     """
 
     selected = pyqtSignal(str)  # 转发格子点击
+    deleted = pyqtSignal(str)   # 转发格子删除请求
 
     def __init__(self, service, items: list, parent=None) -> None:
         """items: [(path, model, duration), ...]"""
@@ -272,10 +278,10 @@ class _ResultGroup(QFrame):
 
         n = len(items)
         caption = _meta_label(items[0][1], items[0][2])
-        if n > 1:
-            caption += f"  ·  {n} 张"
-        meta = QLabel(caption)
+        self._caption_base = caption
+        meta = QLabel(caption + (f"  ·  {n} 张" if n > 1 else ""))
         meta.setProperty("class", "hint")
+        self._meta = meta
         col.addWidget(meta)
 
         thumb = CARD_IMG if n == 1 else (200 if n <= 4 else 180)
@@ -285,6 +291,7 @@ class _ResultGroup(QFrame):
         for i, (path, model, duration) in enumerate(items):
             cell = _ResultCard(service, path, model, duration, thumb=thumb)
             cell.selected.connect(self.selected)
+            cell.deleted.connect(self.deleted)
             self.cells.append(cell)
             grid.addWidget(cell, i // cols, i % cols, Qt.AlignLeft | Qt.AlignTop)
         # 网格整体靠左：多余宽度留在右侧，不被均摊到各列
@@ -293,6 +300,10 @@ class _ResultGroup(QFrame):
         row.addLayout(grid)
         row.addStretch(1)
         col.addLayout(row)
+
+    def update_count(self, n: int) -> None:
+        """删图后刷新元信息里的张数。"""
+        self._meta.setText(self._caption_base + (f"  ·  {n} 张" if n > 1 else ""))
 
 
 _SPIN_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -992,6 +1003,7 @@ class ChatPage(QWidget):
         items = [(str(p), model, d) for p, d in zip(paths, durs)]
         group = _ResultGroup(self.service, items)
         group.selected.connect(self._select_current)
+        group.deleted.connect(self._request_delete_image)
         self._cards.extend(group.cells)
         self.flow.insertWidget(self.flow.count() - 1, group)
         self._scroll_to_bottom()
@@ -1001,6 +1013,92 @@ class ChatPage(QWidget):
         self.session["current_image"] = path
         self._apply_current_image()
         self.sessions.save(self.session)
+
+    # ------------------------------------------------------------------
+    # 删除单张图
+    # ------------------------------------------------------------------
+    def _request_delete_image(self, path: str) -> None:
+        """删除前确认（文案与按钮风格对齐会话删除）。"""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle("删除图片")
+        box.setText("确定要删除这张图片吗？")
+        box.setInformativeText(
+            "图片会移入回收站，并从当前对话与历史记录中移除；"
+            "收藏夹里的副本不受影响。"
+        )
+        del_btn = box.addButton("确定", QMessageBox.AcceptRole)
+        box.addButton("取消", QMessageBox.RejectRole)
+        box.setDefaultButton(del_btn)
+        box.exec_()
+        if box.clickedButton() is del_btn:
+            self._delete_image_confirmed(path)
+
+    def _delete_image_confirmed(self, path: str) -> None:
+        """执行删除：回收站 ← 历史库 ← 会话存档 ← 界面，任一步失败即中止。"""
+        from pixelforge.utils.helpers import send_to_recycle_bin
+
+        if not send_to_recycle_bin(path):
+            QMessageBox.warning(
+                self, "删除失败", "图片未能移入回收站，请确认文件是否仍存在"
+            )
+            return
+        try:
+            self.service.history.delete_path(path)
+        except Exception:  # noqa: BLE001  历史库异常不阻断会话清理
+            pass
+
+        # 会话消息：从所属 images 消息中摘除该路径
+        msgs = self.session.get("messages", [])
+        for msg in msgs:
+            if msg.get("type") == "images" and path in msg.get("paths", []):
+                i = msg["paths"].index(path)
+                del msg["paths"][i]
+                durs = msg.get("durations")
+                if durs and i < len(durs):
+                    del durs[i]
+                if not msg.get("paths"):
+                    msgs.remove(msg)
+                break
+        # 当前图指向被删的图时，回退到会话里最后一张
+        if self.session.get("current_image") == path:
+            new_cur = None
+            for msg in reversed(msgs):
+                if msg.get("type") == "images" and msg.get("paths"):
+                    new_cur = msg["paths"][-1]
+                    break
+            if new_cur:
+                self.session["current_image"] = new_cur
+            else:
+                self.session.pop("current_image", None)
+        self.sessions.save(self.session)
+
+        # 界面：移除格子；组空则整组移除
+        group = self._group_of(path)
+        if group is not None:
+            cell = next((c for c in group.cells if c.path == path), None)
+            if cell is not None:
+                group.cells.remove(cell)
+                if cell in self._cards:
+                    self._cards.remove(cell)
+                cell.deleteLater()
+                group.update_count(len(group.cells))
+            if not group.cells:
+                idx = self.flow.indexOf(group)
+                if idx >= 0:
+                    self.flow.takeAt(idx)
+                group.deleteLater()
+        self._apply_current_image()
+        self._update_welcome()
+
+    def _group_of(self, path: str) -> "_ResultGroup | None":
+        for i in range(self.flow.count()):
+            w = self.flow.itemAt(i).widget()
+            if isinstance(w, _ResultGroup) and any(
+                c.path == path for c in w.cells
+            ):
+                return w
+        return None
 
     def _apply_current_image(self) -> None:
         current = self.session.get("current_image")

@@ -126,3 +126,49 @@ def warn(parent, title: str, text: str) -> None:
 
 def error(parent, title: str, text: str) -> None:
     QMessageBox.critical(parent, title, text)
+
+
+def send_to_recycle_bin(path: str) -> bool:
+    """把文件移入系统回收站（Windows），不彻底删除。成功返回 True。
+
+    非 Windows 平台或系统调用失败返回 False，由调用方决定提示；
+    故意不做静默的永久删除兜底。
+    """
+    import ctypes
+    import os
+    from ctypes import wintypes
+
+    p = str(path)
+    if not os.path.isfile(p):
+        return False
+    if os.name != "nt":
+        return False
+
+    class SHFILEOPSTRUCTW(ctypes.Structure):
+        _fields_ = [
+            ("hwnd", wintypes.HWND),
+            ("wFunc", ctypes.c_uint),
+            ("pFrom", ctypes.c_wchar_p),
+            ("pTo", ctypes.c_wchar_p),
+            ("fFlags", ctypes.c_ushort),
+            ("fAnyOperationsAborted", wintypes.BOOL),
+            ("hNameMappings", ctypes.c_void_p),
+            ("lpszProgressTitle", ctypes.c_wchar_p),
+        ]
+
+    FO_DELETE = 3
+    FOF_SILENT = 0x4
+    FOF_NOCONFIRMATION = 0x10
+    FOF_ALLOWUNDO = 0x40
+    FOF_NOERRORUI = 0x400
+    op = SHFILEOPSTRUCTW()
+    op.hwnd = None
+    op.wFunc = FO_DELETE
+    op.pTo = None
+    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI
+    # pFrom 要求双空字符结尾的路径列表；cast 保留缓冲区内容（含尾 \0），
+    # 若用 .value 会被截断成单空结尾
+    buf = ctypes.create_unicode_buffer(p + "\0")
+    op.pFrom = ctypes.cast(buf, ctypes.c_wchar_p)
+    res = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+    return res == 0 and not op.fAnyOperationsAborted and not os.path.exists(p)

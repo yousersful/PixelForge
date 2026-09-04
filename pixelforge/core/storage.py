@@ -119,3 +119,13 @@ class HistoryStore:
         with self._lock:
             self._conn.execute("DELETE FROM history")
             self._conn.commit()
+
+    def delete_path(self, path: str) -> int:
+        """删除该图片路径对应的历史记录，返回删除的行数。"""
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM history WHERE path = ?",
+                (str(path),),
+            )
+            self._conn.commit()
+            return cur.rowcount
