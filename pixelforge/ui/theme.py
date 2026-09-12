@@ -290,6 +290,20 @@ QHeaderView::section {{
     padding: 8px;
     font-weight: 600;
 }}
+/* 表头排序箭头：原生指示器跟随系统调色板，深色下会是浅底浅箭头，
+   必须用 QSS 重画（配色同 QSpinBox 箭头） */
+QHeaderView::down-arrow {{
+    width: 10px; height: 8px;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid {t['text_sub']};
+}}
+QHeaderView::up-arrow {{
+    width: 10px; height: 8px;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-bottom: 6px solid {t['text_sub']};
+}}
 QTableWidget::item, QTableView::item {{ padding: 4px 8px; }}
 QTableWidget::item:selected, QTableView::item:selected {{
     background-color: {t['accent_soft']};
