@@ -51,9 +51,9 @@ class HistoryPanel(QWidget):
         title = QLabel("历史记录")
         title.setProperty("class", "pageTitle")
         bar.addWidget(title)
-        cap = QLabel("——每一点灵感都值得被记录")
-        cap.setProperty("class", "pageCaption")
-        bar.addWidget(cap)
+        self.cap = QLabel("——每一点灵感都值得被记录")
+        self.cap.setProperty("class", "pageCaption")
+        bar.addWidget(self.cap)
         bar.addStretch(1)
 
         self.search = QLineEdit()
@@ -104,6 +104,11 @@ class HistoryPanel(QWidget):
         self.refresh()
 
     # ------------------------------------------------------------------
+    def resizeEvent(self, ev) -> None:  # noqa: N802
+        # 窄窗口时隐藏副标题，避免工具栏挤压
+        self.cap.setVisible(self.width() >= 1150)
+        super().resizeEvent(ev)
+
     def refresh(self) -> None:
         records = self.history.recent(10000)
         query = self.search.text()

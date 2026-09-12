@@ -69,9 +69,9 @@ class FavoritesPanel(QWidget):
         self.title = QLabel("收藏夹")
         self.title.setProperty("class", "pageTitle")
         bar.addWidget(self.title)
-        cap = QLabel("——你喜欢的都在此处")
-        cap.setProperty("class", "pageCaption")
-        bar.addWidget(cap)
+        self.cap = QLabel("——你喜欢的都在此处")
+        self.cap.setProperty("class", "pageCaption")
+        bar.addWidget(self.cap)
         bar.addStretch(1)
 
         self.search = QLineEdit()
@@ -81,6 +81,9 @@ class FavoritesPanel(QWidget):
         bar.addWidget(self.search)
 
         self.refresh_btn = QPushButton("刷新")
+        self.refresh_btn.setToolTip(
+            f"刷新收藏\n收藏目录：{self.service.favorite_dir}"
+        )
         self.refresh_btn.clicked.connect(self.refresh)
         bar.addWidget(self.refresh_btn)
         left.addLayout(bar)
@@ -107,6 +110,11 @@ class FavoritesPanel(QWidget):
         self.refresh()
 
     # ------------------------------------------------------------------
+    def resizeEvent(self, ev) -> None:  # noqa: N802
+        # 窄窗口时隐藏副标题，避免工具栏挤压（刷新按钮 tooltip 里有收藏目录）
+        self.cap.setVisible(self.width() >= 1150)
+        super().resizeEvent(ev)
+
     def refresh(self) -> None:
         items: list[dict] = []
         like_dir = self.service.favorite_dir
