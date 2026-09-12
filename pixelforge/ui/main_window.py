@@ -79,7 +79,9 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _setup_ui(self) -> None:
         self.setWindowTitle("PixelForge - AI 图像生成")
-        self.setMinimumSize(860, 600)
+        # 1000px：历史记录工具栏（标题+副题+搜索+刷新+双导出）的完整宽度下限，
+        # 再小按钮会互相挤压
+        self.setMinimumSize(1000, 600)
 
         central = QWidget()
         root = QHBoxLayout(central)

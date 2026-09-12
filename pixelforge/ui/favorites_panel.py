@@ -137,9 +137,9 @@ class FavoritesPanel(QWidget):
             its = [it for it in g["items"] if match_date(query, it["month"], it["date"])]
             if its:
                 shown.append({**g, "items": its})
-        self._render(shown)
+        self._render(shown, query)
 
-    def _render(self, groups: list[dict]) -> None:
+    def _render(self, groups: list[dict], query: str = "") -> None:
         # 清空
         while self.holder_col.count() > 1:
             item = self.holder_col.takeAt(0)
@@ -148,9 +148,18 @@ class FavoritesPanel(QWidget):
                 w.deleteLater()
 
         if not groups:
-            empty = QLabel("没有符合条件的收藏")
-            empty.setProperty("class", "hint")
-            self.holder_col.insertWidget(0, empty)
+            if not self._all_months and not query:
+                # 真·空收藏夹（有图被滤掉或正在搜索时给搜索反馈）：
+                # 居中的缘分文案
+                self.holder_col.insertStretch(0)
+                empty = QLabel("缘分到来之时，你就会遇见自己喜欢的图片")
+                empty.setProperty("class", "pageCaption")
+                empty.setAlignment(Qt.AlignCenter)
+                self.holder_col.insertWidget(1, empty)
+            else:
+                empty = QLabel("没有符合条件的收藏")
+                empty.setProperty("class", "hint")
+                self.holder_col.insertWidget(0, empty)
         else:
             for g in groups:
                 header = QLabel(g["label"])
