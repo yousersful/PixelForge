@@ -246,6 +246,9 @@ class SettingsPage(QWidget):
 
         dir_row = QHBoxLayout()
         self.dir_edit = QLineEdit(str(config.effective_image_dir))
+        # 路径改完即存（编辑完成/浏览选择后），与主题预览同理：
+        # 不依赖提供商页的「保存」按钮，避免关软件后改动丢失
+        self.dir_edit.editingFinished.connect(self._apply_image_dir)
         dir_row.addWidget(self.dir_edit, 1)
         browse = QPushButton("浏览…")
         browse.clicked.connect(self._browse_dir)
@@ -323,6 +326,15 @@ class SettingsPage(QWidget):
         )
         if path:
             self.dir_edit.setText(path)
+            self._apply_image_dir()
+
+    def _apply_image_dir(self) -> None:
+        """图片目录改动即时落盘（编辑完成/浏览选择后触发）。"""
+        new_dir = self.dir_edit.text().strip()
+        if new_dir == self.config.get("paths.image_dir", ""):
+            return
+        self.config.set("paths.image_dir", new_dir)
+        self.config.save()
 
     def _on_cancel(self) -> None:
         # 还原界面值（含主题预览的回退）

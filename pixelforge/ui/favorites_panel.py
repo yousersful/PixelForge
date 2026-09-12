@@ -81,9 +81,6 @@ class FavoritesPanel(QWidget):
         bar.addWidget(self.search)
 
         self.refresh_btn = QPushButton("刷新")
-        self.refresh_btn.setToolTip(
-            f"刷新收藏\n收藏目录：{self.service.favorite_dir}"
-        )
         self.refresh_btn.clicked.connect(self.refresh)
         bar.addWidget(self.refresh_btn)
         left.addLayout(bar)
@@ -116,6 +113,10 @@ class FavoritesPanel(QWidget):
         super().resizeEvent(ev)
 
     def refresh(self) -> None:
+        # tooltip 每次刷新时取当前目录（图片路径可被即时修改）
+        self.refresh_btn.setToolTip(
+            f"刷新收藏\n收藏目录：{self.service.favorite_dir}"
+        )
         items: list[dict] = []
         like_dir = self.service.favorite_dir
         if like_dir.exists():
