@@ -92,14 +92,20 @@ def _meta_label(model: str, duration: float) -> str:
 
 
 class _ClickableImage(QLabel):
-    """可点选的图片（用于「当前图」选择）。"""
+    """可点选的图片（用于「当前图」选择；双击打开大图预览）。"""
 
     clicked = pyqtSignal()
+    double_clicked = pyqtSignal()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton:
             self.clicked.emit()
         super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton:
+            self.double_clicked.emit()
+        super().mouseDoubleClickEvent(event)
 
 
 class _UserBubble(QFrame):
@@ -149,6 +155,7 @@ class _ResultCard(QWidget):
 
     selected = pyqtSignal(str)  # 图片路径
     deleted = pyqtSignal(str)   # 请求删除这张图
+    preview = pyqtSignal(str)   # 双击预览大图
 
     def __init__(self, service, path: str, model: str, duration: float,
                  thumb: int = CARD_IMG, parent=None) -> None:
@@ -167,8 +174,9 @@ class _ResultCard(QWidget):
         self.image.setScaledContents(True)
         self.image.setProperty("class", "cellimg")
         self.image.setCursor(Qt.PointingHandCursor)
-        self.image.setToolTip("点击设为当前图（修改时会以它为参考）")
+        self.image.setToolTip("单击选中 · 双击预览大图")
         self.image.clicked.connect(lambda: self.selected.emit(self.path))
+        self.image.double_clicked.connect(lambda: self.preview.emit(self.path))
         col.addWidget(self.image)
 
         # 操作条悬浮在图片底部（不参与网格布局，显示/隐藏不会挤动格子）
@@ -265,6 +273,7 @@ class _ResultGroup(QFrame):
 
     selected = pyqtSignal(str)  # 转发格子点击
     deleted = pyqtSignal(str)   # 转发格子删除请求
+    preview = pyqtSignal(str)   # 转发双击预览
 
     def __init__(self, service, items: list, parent=None) -> None:
         """items: [(path, model, duration), ...]"""
@@ -292,6 +301,7 @@ class _ResultGroup(QFrame):
             cell = _ResultCard(service, path, model, duration, thumb=thumb)
             cell.selected.connect(self.selected)
             cell.deleted.connect(self.deleted)
+            cell.preview.connect(self.preview)
             self.cells.append(cell)
             grid.addWidget(cell, i // cols, i % cols, Qt.AlignLeft | Qt.AlignTop)
         # 网格整体靠左：多余宽度留在右侧，不被均摊到各列
@@ -1004,6 +1014,7 @@ class ChatPage(QWidget):
         group = _ResultGroup(self.service, items)
         group.selected.connect(self._select_current)
         group.deleted.connect(self._request_delete_image)
+        group.preview.connect(self._open_preview)
         self._cards.extend(group.cells)
         self.flow.insertWidget(self.flow.count() - 1, group)
         self._scroll_to_bottom()
@@ -1013,6 +1024,12 @@ class ChatPage(QWidget):
         self.session["current_image"] = path
         self._apply_current_image()
         self.sessions.save(self.session)
+
+    def _open_preview(self, path: str) -> None:
+        """双击缩略图：打开大图预览（拖动/滚轮缩放/Esc 或再双击退出）。"""
+        from pixelforge.ui.preview_dialog import show_image_preview
+
+        show_image_preview(self.window(), path)
 
     # ------------------------------------------------------------------
     # 删除单张图
