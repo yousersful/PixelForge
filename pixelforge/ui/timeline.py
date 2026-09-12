@@ -34,8 +34,13 @@ class MonthTimeline(QScrollArea):
 
     def set_months(self, months: list[dict]) -> None:
         """months: [{month, label, count}]。"""
-        for b in self._buttons:
-            b.deleteLater()
+        # 清空「时间轴」标题以外的所有项（含上次遗留的弹簧——
+        # 否则弹簧每次刷新累积一条，把按钮越推越低）
+        while self.col.count() > 1:
+            item = self.col.takeAt(1)
+            w = item.widget()
+            if w:
+                w.deleteLater()
         self._buttons.clear()
         for m in sorted(months, key=lambda x: x["month"] or "", reverse=True):
             btn = QPushButton()
