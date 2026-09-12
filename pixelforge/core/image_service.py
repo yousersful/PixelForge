@@ -23,6 +23,7 @@ class ImageService:
         self.config = config
         self.key_manager = key_manager
         self.history = history
+        self._migrate_legacy_favorites()
 
     # ------------------------------------------------------------------
     # Provider 工具
@@ -277,8 +278,32 @@ class ImageService:
     # ------------------------------------------------------------------
     @property
     def favorite_dir(self) -> Path:
-        """收藏夹目录：当前图片目录下的 Like/ 子文件夹。"""
-        return self.config.effective_image_dir / "Like"
+        """收藏夹目录：软件数据目录下的 Like/。
+
+        与图片存储路径解耦（固定跟软件走），避免多项目副本或
+        修改图片路径后收藏位置错乱。
+        """
+        return self.config.config_dir / "Like"
+
+    def _migrate_legacy_favorites(self) -> None:
+        """旧版收藏存在 图片目录/Like，启动时一次性搬到数据目录 Like。
+
+        复制而非移动（旧目录原样保留由用户处置）；同名文件跳过，
+        因此重复启动无副作用。任何异常静默忽略，不阻断启动。
+        """
+        try:
+            import shutil
+
+            legacy = self.config.effective_image_dir / "Like"
+            new = self.favorite_dir
+            if not legacy.is_dir() or legacy.resolve() == new.resolve():
+                return
+            new.mkdir(parents=True, exist_ok=True)
+            for f in legacy.iterdir():
+                if f.is_file() and not (new / f.name).exists():
+                    shutil.copy2(f, new / f.name)
+        except Exception:  # noqa: BLE001
+            pass
 
     def favorite(self, image_path: str | Path) -> Path:
         """把图片复制到收藏夹（Like）目录，返回收藏后的路径。
